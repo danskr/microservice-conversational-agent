@@ -79,6 +79,36 @@ The included Order/Fulfillment service serves as the reference implementation, b
 - require LangGraph human-in-the-loop confirmation for operations marked risky in the digest;
 - interpret backend business errors conversationally.
 
+
+## LangGraph workflow
+
+The LangGraph workflow gives the conversational agent a structured execution model in which natural-language reasoning, API validation, safety enforcement, deterministic execution, and user-facing responses are represented as separate stages. The graph deliberately avoids placing the entire interaction inside one unconstrained agent loop. Instead, the LLM is responsible for understanding the user's intent and selecting an appropriate service operation, while deterministic application logic validates and executes that operation according to the Service Digest.
+
+Every conversation begins with **`prepare_turn`**, which prepares the current conversational context and known service entities before passing control to **`decide`**. The `decide` node is the main reasoning and routing stage. Using the Service Digest, conversation history, and available service operations, it determines whether the agent can answer directly, needs to invoke a REST operation, or needs additional reasoning after an operation has completed.
+
+The workflow contains three main execution paths:
+
+- **Knowledge and conversational responses**: when the user's question can be answered from the Service Digest or existing conversational context, `decide` routes directly to **`emit_response`**. No backend REST operation is executed.
+
+- **Validated service invocation**: when the request requires live service data or an action against the microservice, `decide` produces a structured operation request and routes it to **`validate_call`**. The requested operation, path parameters, query parameters, and request body are validated against the operation definition and schemas contained in the Service Digest before execution can continue.
+
+- **Safety-controlled execution**: validated operations pass through **`safety_gate`**, where deterministic policy evaluates the operation's effect, risk classification, and confirmation requirements. Permitted operations continue to **`execute_call`**, while rejected or unapproved operations are routed to **`end_after_rejection`** without calling the backend service.
+
+After **`execute_call`**, the result is returned to `decide` rather than being sent directly to the user. This allows the agent to reason over actual service results, resolve additional entities, determine whether another service operation is required, or construct the final conversational response. Multi-step requests can therefore progress through several controlled API calls while each individual invocation still passes through validation and safety enforcement.
+
+The graph deliberately separates:
+
+- conversational reasoning from REST execution,
+- Service Digest knowledge from live service data,
+- LLM-selected operations from deterministic HTTP request construction,
+- schema validation from safety authorization,
+- safe execution from rejected execution,
+- backend results from the final user-facing response.
+
+This separation establishes the central safety boundary of the project: **the LLM can decide what the user is trying to accomplish, but it cannot directly construct or execute arbitrary HTTP requests**. Only operations defined in the Service Digest and accepted by the deterministic validation and safety layers can reach the microservice.
+
+<img src="images/graph.png" alt="LangGraph workflow for Conversational Agent" width="100%">
+
 ## Critical execution boundary
 
 The LLM **cannot issue raw HTTP requests**.
