@@ -54,7 +54,7 @@ The architecture therefore establishes a clear control boundary:
 This separation is intentional. The LLM is used for language understanding, intent interpretation, and planning, while validation, authorization, safety enforcement, HTTP request construction, and execution remain under deterministic application control.
 
 <p align="center">
-  <img src="images/architecture.png" alt="Architecture view" width="60%">
+  <img src="images/architecture.png" alt="Architecture view" width="45%">
 </p>
 
 ## What the agent can do
