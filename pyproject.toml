@@ -3,9 +3,9 @@ requires = ["setuptools>=75", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "order-fulfillment-conversational-agent"
+name = "microservice-conversational-agent"
 version = "1.0.0"
-description = "LangGraph conversational layer for the Order Fulfillment REST microservice"
+description = "LangGraph conversational agent that understands and safely operates REST microservices using a semantic service digest"
 requires-python = ">=3.11"
 dependencies = [
   "langgraph>=1.1,<2",

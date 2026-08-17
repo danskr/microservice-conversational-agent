@@ -1,8 +1,8 @@
-# Order Fulfillment Conversational Agent
+# Microservice Conversational Agent
 
-A Kubernetes-deployable **LangGraph conversational layer** over the existing Order/Fulfillment REST microservice.
+A Kubernetes-deployable LangGraph conversational layer that enables natural-language understanding and safe operation of REST microservices through a semantic Service Digest.
 
-The project demonstrates that a runtime agent can understand, discuss, plan against, and safely invoke a non-trivial REST service using **only a generated Service Digest** rather than the service's original source repository.
+The included Order/Fulfillment service serves as the reference implementation and demonstration domain.
 
 ## Showcase goal
 
@@ -144,7 +144,7 @@ sudo systemctl start docker
 Verify:
 
 ```bash
-sudo ctr -n k8s.io images list | grep order-fulfillment-conversational-agent
+sudo ctr -n k8s.io images list | grep microservice-conversational-agent
 ```
 
 ## 4. Create Kubernetes secrets without writing them to disk

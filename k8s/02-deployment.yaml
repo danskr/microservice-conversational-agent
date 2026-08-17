@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: agent
-          image: order-fulfillment-conversational-agent:1.0.0
+          image: microservice-conversational-agent:1.0.0
           imagePullPolicy: Never
           ports:
             - name: http

@@ -4,7 +4,7 @@ test:
 	pytest -q
 
 build:
-	docker build -t order-fulfillment-conversational-agent:1.0.0 .
+	docker build -t microservice-conversational-agent:1.0.0 .
 
 load:
 	./scripts/build-and-load.sh

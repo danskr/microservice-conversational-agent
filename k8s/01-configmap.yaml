@@ -13,5 +13,5 @@ data:
   MAX_DIGEST_SNIPPETS: "12"
   CONFIRM_CONDITIONAL_ACTIONS: "false"
   LANGSMITH_TRACING: "false"
-  LANGSMITH_PROJECT: "order-fulfillment-conversational-agent"
+  LANGSMITH_PROJECT: "microservice-conversational-agent"
   LOG_LEVEL: "INFO"
