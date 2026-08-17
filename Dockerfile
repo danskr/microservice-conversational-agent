@@ -6,7 +6,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-COPY pyproject.toml requirements.txt ./
+COPY pyproject.toml ./
 COPY src ./src
 COPY digest ./digest
 COPY langgraph.json ./langgraph.json
