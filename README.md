@@ -291,8 +291,3 @@ pytest -q
 
 The unit tests do not call the LLM. They validate the digest loader, contract validator, allowlisted REST executor, and confirmation parser.
 
-# Important deployment note
-
-This package intentionally runs **`langgraph dev` in Kubernetes** for the showcase. Current LangGraph documentation describes that Agent Server mode as a development/testing server, while production self-hosted Agent Server deployment uses a different licensed stack with durable backing services. This project therefore demonstrates the agent and Studio experience on your lab cluster without pretending that the dev server is a production deployment.
-
-For a production evolution, replace the showcase Agent Server with a supported production deployment, durable persistence, TLS/Ingress, authentication/authorization, network policies, and proper secret management.
