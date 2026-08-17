@@ -23,7 +23,7 @@ This project explores that architecture. Service knowledge is captured in a stru
 The included Order/Fulfillment service serves as the reference implementation, but the broader goal is to explore a reusable conversational layer that can sit in front of arbitrary REST microservices while keeping API execution constrained, explainable, and under deterministic safety controls.
 
 <p align="center">
-  <img src="images/main.png" alt="SRE engineer monitoring Kubernetes applications and operational signals" width="65%">
+  <img src="images/main.png" alt="SRE engineer monitoring Kubernetes applications and operational signals" width="40%">
 </p>
 
 ## Architecture
