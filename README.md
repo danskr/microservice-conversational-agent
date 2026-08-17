@@ -23,48 +23,39 @@ This project explores that architecture. Service knowledge is captured in a stru
 The included Order/Fulfillment service serves as the reference implementation, but the broader goal is to explore a reusable conversational layer that can sit in front of arbitrary REST microservices while keeping API execution constrained, explainable, and under deterministic safety controls.
 
 <p align="center">
-  <img src="images/main.png" alt="SRE engineer monitoring Kubernetes applications and operational signals" width="60%">
+  <img src="images/main.png" alt="Engineer looking at designs" width="60%">
 </p>
 
 ## Architecture
 
-```text
-                  LangSmith Studio
-                  Chat + Graph UI
-                         |
-                         v
-              LangGraph Agent Server
-              namespace: conversational-layer
-                         |
-                 +-------+--------+
-                 |                |
-                 v                v
-       service-digest.yaml    thread state
-                 |                |
-                 +-------+--------+
-                         v
-                   LLM planner
-                         |
-                         v
-                canonical operation
-                         |
-                         v
-             deterministic validator
-                         |
-                    safety gate
-                         |
-                 interrupt if needed
-                         |
-                         v
-               deterministic executor
-                         |
-                         v
-       Order/Fulfillment REST Service
-       namespace: order-fulfillment
-                         |
-                         v
-                     PostgreSQL
-```
+The Microservice Conversational Agent is organized as a layered architecture that separates conversational reasoning from deterministic API execution.
+
+At the top, **LangSmith Studio** provides the interactive chat and graph interface used to communicate with and inspect the agent. Studio connects to the **LangGraph Agent Server**, which runs in the `conversational-layer` Kubernetes namespace and hosts the conversational workflow.
+
+The agent reasons over two primary sources of context:
+
+- **`service-digest.yaml`** — the semantic representation of the target microservice, including its purpose, REST operations, schemas, business rules, workflows, conversational hints, and execution policies.
+- **Thread state** — the current conversation history and runtime context, including previously resolved entities, prior operation results, pending confirmations, and other state required for multi-turn interaction.
+
+These inputs are combined by the **LLM planner**, which interprets the user's intent and produces a structured **canonical operation** rather than an arbitrary HTTP request. The canonical operation identifies the service operation to invoke together with the required path parameters, query parameters, request body, and other structured arguments.
+
+Before any request can reach the backend, it passes through a **deterministic validator**. The validator checks the proposed operation against the definitions and schemas contained in the Service Digest and ensures that only supported and correctly formed operations proceed.
+
+The validated request then enters the **safety gate**, where deterministic policy evaluates the operation's effect, risk level, and confirmation requirements. If the action requires explicit user approval, the LangGraph workflow can pause at an **interrupt** and resume only after the user confirms or rejects the proposed action.
+
+Once validation and safety checks succeed, the **deterministic executor** constructs the actual HTTP request from the allowlisted operation definition and invokes the target service. The LLM does not directly create URLs or issue unrestricted HTTP calls.
+
+In the reference deployment, the target backend is the **Order/Fulfillment REST Service** running in the `order-fulfillment` Kubernetes namespace. That service persists its operational data in **PostgreSQL**.
+
+The architecture therefore establishes a clear control boundary:
+
+**LangSmith Studio → LangGraph Agent Server → Service Digest + Thread State → LLM Planner → Canonical Operation → Deterministic Validation → Safety Gate → Optional Human Confirmation → Deterministic Execution → REST Service → PostgreSQL**
+
+This separation is intentional. The LLM is used for language understanding, intent interpretation, and planning, while validation, authorization, safety enforcement, HTTP request construction, and execution remain under deterministic application control.
+
+<p align="center">
+  <img src="images/architecture.png" alt="Architecture view" width="60%">
+</p>
 
 ## What the agent can do
 
