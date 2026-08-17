@@ -57,6 +57,69 @@ This separation is intentional. The LLM is used for language understanding, inte
   <img src="images/architecture.png" alt="Architecture view" width="45%">
 </p>
 
+## Service Digest
+
+The **Service Digest** is the semantic contract between the target microservice and the conversational agent. It complements the service's OpenAPI definition by describing not only **how an endpoint can be called**, but also **what the service does, how its domain behaves, which rules constrain operations, and how those operations should be used safely in conversation**.
+
+The digest is represented as a single YAML document and is intended to contain stable service knowledge rather than live operational data. It does not contain secrets, credentials, current orders, customer records, or other runtime state. Instead, it captures the knowledge an agent needs to understand and operate the service correctly.
+
+At a high level, the Service Digest contains:
+
+- **Service identity and purpose** — service name, responsibility, business capabilities, scope, non-goals, ownership, and high-level behavior.
+- **Domain model** — important entities, relationships, identifiers, enums, terminology, and concepts used by the service.
+- **REST operations** — the allowlisted operations the agent may invoke, including operation IDs, HTTP methods, paths, parameters, request/response schemas, expected behavior, and execution characteristics.
+- **Business rules** — constraints that cannot be inferred reliably from API schemas alone, such as when an order may be cancelled, which state transitions are permitted, or what conditions must hold before an operation can proceed.
+- **State machines** — valid lifecycle states and transitions for domain entities such as orders, payments, shipments, or fulfillment processes.
+- **Workflows** — higher-level sequences that describe how multiple service operations relate to common business processes.
+- **Schemas and validation metadata** — structured definitions used by the deterministic validator to verify path parameters, query parameters, and request bodies before execution.
+- **Errors and events** — known business errors, validation failures, domain events, and other outcomes that help the agent interpret service responses.
+- **Conversational semantics** — guidance for resolving phrases such as "this order", "the latest shipment", or "the previous one" into concrete service entities and identifiers.
+- **Execution and safety policy** — metadata describing whether an operation is read-only or state-changing, its risk level, whether confirmation is required, and other restrictions enforced before execution.
+- **Evidence and provenance** — references indicating where particular pieces of knowledge were derived from, such as source code, OpenAPI definitions, tests, or documentation.
+- **Discrepancies and uncertainties** — places where source materials disagree or where the available evidence is insufficient to make a strong assertion.
+
+A simplified conceptual structure looks like this:
+
+```yaml
+service:
+  identity:
+  purpose:
+  capabilities:
+  non_goals:
+
+domain:
+  entities:
+  relationships:
+  enums:
+  state_machines:
+
+operations:
+  - operation_id:
+    http:
+    contract:
+    business_rules:
+    execution:
+      effect:
+      risk:
+      confirmation:
+
+workflows:
+business_rules:
+errors:
+events:
+
+conversation:
+  entity_resolution:
+  references:
+  guidance:
+
+execution_policy:
+schemas:
+
+evidence:
+discrepancies:
+uncertainties:
+
 ## What the agent can do
 
 - answer questions about service purpose and capabilities;
