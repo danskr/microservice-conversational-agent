@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: conversational-agent-config
+  namespace: conversational-layer
+data:
+  ORDER_SERVICE_BASE_URL: "http://order-fulfillment-service.order-fulfillment.svc.cluster.local:8080"
+  DIGEST_PATH: "/app/digest/order-fulfillment-service-digest.yaml"
+  OPENAI_MODEL: "gpt-5-mini"
+  MAX_AGENT_STEPS: "8"
+  REQUEST_TIMEOUT_SECONDS: "20"
+  MAX_API_RESULT_CHARS: "12000"
+  MAX_DIGEST_SNIPPETS: "12"
+  CONFIRM_CONDITIONAL_ACTIONS: "false"
+  LANGSMITH_TRACING: "false"
+  LANGSMITH_PROJECT: "order-fulfillment-conversational-agent"
+  LOG_LEVEL: "INFO"

@@ -1,0 +1,3673 @@
+digest:
+  schema_name: Conversational Service Digest
+  schema_version: '1.0'
+  generated_at: '2026-08-13T15:43:15Z'
+  generator: manual/reference analyzer synthesis for showcase project
+  canonical_format: YAML
+  self_contained_for_runtime_agent: true
+  source_package: order-fulfillment-service.zip
+  design_goal: Provide sufficient semantic and transport information for a separate runtime conversational agent to explain,
+    plan, validate, and invoke this service without access to original repository files.
+  runtime_truth_boundary: The digest contains stable service semantics, not current database state. Current customers, products,
+    orders, inventory, shipments, returns, and refunds must be retrieved through REST operations.
+agent_index:
+  entity_count: 11
+  entities:
+  - Customer
+  - Product
+  - Order
+  - OrderItem
+  - InventoryReservation
+  - Shipment
+  - ShipmentItem
+  - ReturnRequest
+  - ReturnItem
+  - Refund
+  - OrderEvent
+  operation_count: 30
+  operations:
+  - get_service_metadata
+  - health_check
+  - list_customers
+  - create_customer
+  - list_products
+  - create_product
+  - get_product
+  - adjust_inventory
+  - list_orders
+  - create_order
+  - get_order
+  - add_order_item
+  - remove_order_item
+  - submit_order
+  - capture_payment
+  - allocate_inventory
+  - cancel_order
+  - get_order_timeline
+  - list_shipments
+  - create_shipment
+  - get_shipment
+  - mark_shipment_delivered
+  - list_returns
+  - create_return
+  - get_return
+  - approve_return
+  - reject_return
+  - receive_return
+  - refund_return
+  - list_refunds
+  workflow_count: 9
+  workflows:
+  - create_draft_order
+  - submit_and_pay_order
+  - allocate_order_inventory
+  - fulfill_order
+  - deliver_shipment
+  - cancel_unshipped_order
+  - return_delivered_items
+  - process_return_to_refund
+  - explain_order_state
+  state_machines:
+  - order_lifecycle
+  - payment_lifecycle
+  - reservation_lifecycle
+  - shipment_lifecycle
+  - return_lifecycle
+  business_rule_count: 25
+  business_error_count: 29
+  business_event_count: 16
+service:
+  id: order-fulfillment-service
+  name: Order Fulfillment Service
+  version: 1.0.0
+  domain: ecommerce-order-fulfillment
+  purpose: Manage the business lifecycle of customer orders from draft creation through payment, inventory reservation, partial
+    or complete shipment, delivery, cancellation, return, inventory restocking, and refund.
+  capabilities:
+  - customer and product catalog
+  - draft order creation and editing
+  - order submission
+  - simulated payment capture
+  - physical/reserved inventory
+  - full or partial inventory allocation
+  - full or partial shipment
+  - delivery tracking
+  - pre-shipment cancellation
+  - automatic cancellation refund
+  - return eligibility and 30-day window
+  - return approval/rejection
+  - return receiving and restocking
+  - partial/full simulated refunds
+  - business-event timeline
+  non_goals:
+  - Real payment-network integration
+  - Carrier API integration
+  - Customer authentication
+  - Tax calculation
+  important_concepts:
+  - Orders are mutable only while DRAFT.
+  - Payment is simulated but has explicit capture and refund states.
+  - Inventory allocation reserves stock before shipment.
+  - Partial allocation and partial shipment are supported.
+  - Full cancellation is forbidden once any item has shipped.
+  - Returns are limited to delivered, returnable quantities and a 30-day window.
+  ownership:
+    team: Commerce Platform
+runtime_interface:
+  protocol: HTTP REST
+  application_port: 8080
+  health_endpoint: /health
+  swagger_ui: /docs
+  runtime_openapi: /openapi.json
+  authentication:
+    implemented: false
+    note: v1 intentionally has no customer authentication/authorization; the conversational layer must not imply identity-based
+      access control exists.
+  known_kubernetes_binding:
+    namespace: order-fulfillment
+    service_name: order-fulfillment-service
+    service_type: NodePort
+    service_port: 8080
+    node_port: 30080
+    cluster_internal_base_url: http://order-fulfillment-service.order-fulfillment.svc:8080
+    lab_node_base_url: http://192.168.253.10:30080
+    binding_is_environment_specific: true
+  database:
+    engine: PostgreSQL 16
+    service_name: postgres
+    port: 5432
+    persistence: emptyDir in supplied lab manifest; data resets when PostgreSQL pod storage is recreated
+    credentials_in_digest: false
+  deployment:
+    language: Python 3.12
+    framework: FastAPI
+    orm: SQLAlchemy 2
+    container_image: order-fulfillment-service:1.0.0
+domain:
+  entities:
+    Customer:
+      description: Customer that owns orders.
+      identity:
+        field: id
+        type: string
+        generated_format: CUS-<10 uppercase hex>; deterministic demo IDs also exist
+      fields:
+        id:
+          type: string
+          required: true
+        name:
+          type: string
+          max_length: 120
+        email:
+          type: string
+          max_length: 200
+          unique: true
+        active:
+          type: boolean
+          default: true
+        created_at:
+          type: datetime
+          timezone_aware: true
+      relationships:
+        orders:
+          entity: Order
+          cardinality: one_to_many
+    Product:
+      description: Catalog product that also owns aggregate physical/reserved inventory counters.
+      identity:
+        field: sku
+        type: string
+      fields:
+        sku:
+          type: string
+          max_length: 40
+        name:
+          type: string
+          max_length: 160
+        unit_price:
+          type: decimal
+          precision: 12,2
+        currency:
+          type: string
+          length: 3
+          default: USD
+        stock_on_hand:
+          type: integer
+          default: 0
+        reserved_stock:
+          type: integer
+          default: 0
+        available_stock:
+          type: integer
+          computed: stock_on_hand - reserved_stock
+        returnable:
+          type: boolean
+          default: true
+        active:
+          type: boolean
+          default: true
+    Order:
+      description: Customer purchase aggregate and primary fulfillment lifecycle entity.
+      identity:
+        field: id
+        type: string
+        generated_format: ORD-<10 uppercase hex>
+      fields:
+        id:
+          type: string
+        customer_id:
+          type: string
+          references: Customer.id
+        status:
+          type: OrderStatus
+          default: DRAFT
+        payment_status:
+          type: PaymentStatus
+          default: NONE
+        currency:
+          type: string
+          length: 3
+          default: USD
+        shipping_address:
+          type: string
+          max_length: 300
+        total_amount:
+          type: decimal
+          precision: 12,2
+          default: '0.00'
+          calculation: sum(item.unit_price * (item.quantity - item.cancelled_qty)) when recalculated
+        created_at:
+          type: datetime
+          timezone_aware: true
+        updated_at:
+          type: datetime
+          timezone_aware: true
+      relationships:
+        customer:
+          entity: Customer
+          cardinality: many_to_one
+        items:
+          entity: OrderItem
+          cardinality: one_to_many
+        shipments:
+          entity: Shipment
+          cardinality: one_to_many
+        returns:
+          entity: ReturnRequest
+          cardinality: one_to_many
+        refunds:
+          entity: Refund
+          cardinality: one_to_many
+        events:
+          entity: OrderEvent
+          cardinality: one_to_many
+    OrderItem:
+      description: Snapshot-priced product line within an order; tracks allocation, shipment, cancellation, and returned quantities.
+      identity:
+        field: id
+        type: string
+        generated_format: ITM-<10 uppercase hex>
+      fields:
+        id:
+          type: string
+        order_id:
+          type: string
+          references: Order.id
+        sku:
+          type: string
+          references: Product.sku
+        product_name:
+          type: string
+          snapshot: true
+        quantity:
+          type: integer
+        unit_price:
+          type: decimal
+          snapshot: true
+        allocated_qty:
+          type: integer
+          default: 0
+        shipped_qty:
+          type: integer
+          default: 0
+        cancelled_qty:
+          type: integer
+          default: 0
+        returned_qty:
+          type: integer
+          default: 0
+      derived_quantities:
+        unallocated_required: quantity - cancelled_qty - allocated_qty
+        shippable: allocated_qty - shipped_qty
+      relationships:
+        order:
+          entity: Order
+          cardinality: many_to_one
+        product:
+          entity: Product
+          cardinality: many_to_one
+        reservations:
+          entity: InventoryReservation
+          cardinality: one_to_many
+    InventoryReservation:
+      description: Reservation of product stock for a specific order item; consumed during shipment or released during cancellation.
+      identity:
+        field: id
+        type: string
+        generated_format: RSV-<10 uppercase hex>
+      fields:
+        id:
+          type: string
+        order_item_id:
+          type: string
+          references: OrderItem.id
+        sku:
+          type: string
+          references: Product.sku
+        quantity:
+          type: integer
+        remaining_quantity:
+          type: integer
+        status:
+          type: ReservationStatus
+          default: ACTIVE
+        created_at:
+          type: datetime
+    Shipment:
+      description: Physical/digital fulfillment shipment for one order.
+      identity:
+        field: id
+        type: string
+        generated_format: SHP-<10 uppercase hex>
+      fields:
+        id:
+          type: string
+        order_id:
+          type: string
+          references: Order.id
+        carrier:
+          type: string
+          max_length: 80
+        tracking_number:
+          type: string
+          max_length: 100
+        status:
+          type: ShipmentStatus
+          default: SHIPPED
+        shipped_at:
+          type: datetime
+        delivered_at:
+          type: datetime|null
+      relationships:
+        order:
+          entity: Order
+          cardinality: many_to_one
+        items:
+          entity: ShipmentItem
+          cardinality: one_to_many
+    ShipmentItem:
+      description: Quantity of an OrderItem included in a Shipment.
+      identity:
+        field: id
+        type: string
+        generated_format: SIT-<10 uppercase hex>
+      fields:
+        id:
+          type: string
+        shipment_id:
+          type: string
+          references: Shipment.id
+        order_item_id:
+          type: string
+          references: OrderItem.id
+        quantity:
+          type: integer
+    ReturnRequest:
+      description: Return authorization lifecycle for one or more delivered order-item quantities.
+      identity:
+        field: id
+        type: string
+        generated_format: RET-<10 uppercase hex>
+      fields:
+        id:
+          type: string
+        order_id:
+          type: string
+          references: Order.id
+        status:
+          type: ReturnStatus
+          default: REQUESTED
+        reason:
+          type: string
+          max_length: 300
+        requested_at:
+          type: datetime
+        approved_at:
+          type: datetime|null
+        received_at:
+          type: datetime|null
+      relationships:
+        order:
+          entity: Order
+          cardinality: many_to_one
+        items:
+          entity: ReturnItem
+          cardinality: one_to_many
+    ReturnItem:
+      description: Quantity of an OrderItem included in a return request.
+      identity:
+        field: id
+        type: string
+        generated_format: RIT-<10 uppercase hex>
+      fields:
+        id:
+          type: string
+        return_id:
+          type: string
+          references: ReturnRequest.id
+        order_item_id:
+          type: string
+          references: OrderItem.id
+        quantity:
+          type: integer
+    Refund:
+      description: Completed simulated refund associated with an order and optionally a return.
+      identity:
+        field: id
+        type: string
+        generated_format: RFD-<10 uppercase hex>
+      fields:
+        id:
+          type: string
+        order_id:
+          type: string
+          references: Order.id
+        return_id:
+          type: string|null
+          references: ReturnRequest.id
+        amount:
+          type: decimal
+          precision: 12,2
+        currency:
+          type: string
+          length: 3
+        status:
+          type: RefundStatus
+          default: COMPLETED
+        reason:
+          type: string
+          max_length: 300
+        created_at:
+          type: datetime
+    OrderEvent:
+      description: Chronological audit/business event for an order.
+      identity:
+        field: id
+        type: string
+        generated_format: EVT-<10 uppercase hex>
+      fields:
+        id:
+          type: string
+        order_id:
+          type: string
+          references: Order.id
+        event_type:
+          type: string
+          max_length: 80
+        description:
+          type: string
+        created_at:
+          type: datetime
+  enums:
+    OrderStatus:
+    - DRAFT
+    - SUBMITTED
+    - PAID
+    - PARTIALLY_ALLOCATED
+    - ALLOCATED
+    - PARTIALLY_SHIPPED
+    - SHIPPED
+    - DELIVERED
+    - CANCELLED
+    PaymentStatus:
+    - NONE
+    - CAPTURED
+    - PARTIALLY_REFUNDED
+    - REFUNDED
+    ReservationStatus:
+    - ACTIVE
+    - CONSUMED
+    - RELEASED
+    ShipmentStatus:
+    - SHIPPED
+    - DELIVERED
+    ReturnStatus:
+    - REQUESTED
+    - APPROVED
+    - RECEIVED
+    - REFUNDED
+    - REJECTED
+    RefundStatus:
+    - COMPLETED
+  relationship_overview:
+  - Customer -> Order
+  - Order -> OrderItem -> Product
+  - OrderItem -> InventoryReservation
+  - Order -> Shipment -> ShipmentItem -> OrderItem
+  - Order -> ReturnRequest -> ReturnItem -> OrderItem
+  - Order -> Refund
+  - Order -> OrderEvent
+state_machines:
+  order_lifecycle:
+    entity: Order
+    state_field: status
+    states:
+    - DRAFT
+    - SUBMITTED
+    - PAID
+    - PARTIALLY_ALLOCATED
+    - ALLOCATED
+    - PARTIALLY_SHIPPED
+    - SHIPPED
+    - DELIVERED
+    - CANCELLED
+    transitions:
+    - from: DRAFT
+      to: SUBMITTED
+      trigger: submit_order
+    - from: SUBMITTED
+      to: PAID
+      trigger: capture_payment
+    - from: PAID
+      to:
+      - PAID
+      - PARTIALLY_ALLOCATED
+      - ALLOCATED
+      trigger: allocate_inventory
+      note: PAID remains when zero units can be allocated with allow_partial=true
+    - from: PARTIALLY_ALLOCATED
+      to:
+      - PARTIALLY_ALLOCATED
+      - ALLOCATED
+      trigger: allocate_inventory
+    - from:
+      - ALLOCATED
+      - PARTIALLY_ALLOCATED
+      - PARTIALLY_SHIPPED
+      to:
+      - PARTIALLY_SHIPPED
+      - SHIPPED
+      trigger: create_shipment
+    - from: SHIPPED
+      to: DELIVERED
+      trigger: mark_shipment_delivered
+      condition: all required units shipped and every shipment DELIVERED
+    - from:
+      - DRAFT
+      - SUBMITTED
+      - PAID
+      - PARTIALLY_ALLOCATED
+      - ALLOCATED
+      to: CANCELLED
+      trigger: cancel_order
+      condition: no shipped_qty > 0
+    important_limitations:
+    - allocate_inventory is not allowed after order status becomes PARTIALLY_SHIPPED; additional future allocation after a
+      partial shipment is therefore not supported by v1.
+  payment_lifecycle:
+    entity: Order
+    state_field: payment_status
+    states:
+    - NONE
+    - CAPTURED
+    - PARTIALLY_REFUNDED
+    - REFUNDED
+    transitions:
+    - from: NONE
+      to: CAPTURED
+      trigger: capture_payment
+    - from: CAPTURED
+      to: REFUNDED
+      trigger: cancel_order when payment captured
+    - from:
+      - CAPTURED
+      - PARTIALLY_REFUNDED
+      to:
+      - PARTIALLY_REFUNDED
+      - REFUNDED
+      trigger: refund_return
+      condition: based on cumulative refund amount compared with order.total_amount
+  reservation_lifecycle:
+    entity: InventoryReservation
+    state_field: status
+    states:
+    - ACTIVE
+    - CONSUMED
+    - RELEASED
+    transitions:
+    - from: ACTIVE
+      to: CONSUMED
+      trigger: create_shipment
+      condition: remaining_quantity reaches zero
+    - from: ACTIVE
+      to: RELEASED
+      trigger: cancel_order
+      condition: active remaining quantity > 0
+  shipment_lifecycle:
+    entity: Shipment
+    state_field: status
+    states:
+    - SHIPPED
+    - DELIVERED
+    transitions:
+    - from: SHIPPED
+      to: DELIVERED
+      trigger: mark_shipment_delivered
+  return_lifecycle:
+    entity: ReturnRequest
+    state_field: status
+    states:
+    - REQUESTED
+    - APPROVED
+    - RECEIVED
+    - REFUNDED
+    - REJECTED
+    transitions:
+    - from: REQUESTED
+      to: APPROVED
+      trigger: approve_return
+    - from: REQUESTED
+      to: REJECTED
+      trigger: reject_return
+    - from: APPROVED
+      to: RECEIVED
+      trigger: receive_return
+    - from: RECEIVED
+      to: REFUNDED
+      trigger: refund_return
+business_rules:
+  BR-CUSTOMER-001:
+    name: Active customer required for order creation
+    rule: create_order requires an existing Customer with active=true
+    operations:
+    - create_order
+    errors:
+    - INVALID_CUSTOMER
+  BR-CUSTOMER-002:
+    name: Customer email uniqueness
+    rule: create_customer rejects an email already present in customers
+    operations:
+    - create_customer
+    errors:
+    - EMAIL_ALREADY_EXISTS
+  BR-PRODUCT-001:
+    name: Product SKU uniqueness
+    rule: create_product rejects an existing SKU
+    operations:
+    - create_product
+    errors:
+    - SKU_ALREADY_EXISTS
+  BR-INVENTORY-001:
+    name: Reserved stock floor
+    rule: physical stock may not be adjusted below reserved_stock
+    operations:
+    - adjust_inventory
+    errors:
+    - INVENTORY_BELOW_RESERVED
+  BR-ORDER-001:
+    name: Draft-only editing
+    rule: order items can be added or removed only while Order.status == DRAFT
+    operations:
+    - add_order_item
+    - remove_order_item
+    errors:
+    - ORDER_NOT_EDITABLE
+  BR-ORDER-002:
+    name: Currency consistency
+    rule: Product.currency must equal Order.currency when adding an item
+    operations:
+    - add_order_item
+    errors:
+    - CURRENCY_MISMATCH
+  BR-ORDER-003:
+    name: Submit non-empty positive order
+    rule: Only a DRAFT order containing at least one item and total_amount > 0 may be submitted
+    operations:
+    - submit_order
+    errors:
+    - INVALID_ORDER_STATE
+    - EMPTY_ORDER
+    - INVALID_ORDER_TOTAL
+  BR-PAYMENT-001:
+    name: Payment capture state
+    rule: Payment capture requires Order.status == SUBMITTED and payment_status == NONE
+    operations:
+    - capture_payment
+    errors:
+    - INVALID_ORDER_STATE
+    - PAYMENT_ALREADY_PROCESSED
+  BR-ALLOC-001:
+    name: Allocation state
+    rule: Inventory allocation is allowed only for PAID or PARTIALLY_ALLOCATED orders
+    operations:
+    - allocate_inventory
+    errors:
+    - INVALID_ORDER_STATE
+  BR-ALLOC-002:
+    name: Partial allocation policy
+    rule: allow_partial=false rejects the full allocation attempt on any shortage; allow_partial=true reserves available quantities
+    operations:
+    - allocate_inventory
+    errors:
+    - INSUFFICIENT_INVENTORY
+  BR-SHIP-001:
+    name: Ship only allocated quantity
+    rule: A shipment line quantity cannot exceed OrderItem.allocated_qty - OrderItem.shipped_qty
+    operations:
+    - create_shipment
+    errors:
+    - QUANTITY_NOT_ALLOCATED
+  BR-SHIP-002:
+    name: No duplicate shipment lines
+    rule: An order_item_id may appear at most once in one shipment request
+    operations:
+    - create_shipment
+    errors:
+    - DUPLICATE_SHIPMENT_LINE
+  BR-SHIP-003:
+    name: Shipment consumes inventory
+    rule: Shipping consumes active reservations FIFO, reduces reserved_stock and stock_on_hand, and increments shipped_qty
+    operations:
+    - create_shipment
+  BR-DELIVERY-001:
+    name: Order delivery completion
+    rule: Order becomes DELIVERED only when all non-cancelled required quantity is shipped and every shipment is DELIVERED
+    operations:
+    - mark_shipment_delivered
+  BR-CANCEL-001:
+    name: No full cancellation after shipment
+    rule: Full cancellation is forbidden once any item shipped_qty > 0
+    operations:
+    - cancel_order
+    errors:
+    - ORDER_ALREADY_SHIPPED
+  BR-CANCEL-002:
+    name: Cancellation releases reservations
+    rule: Cancellation releases every active remaining inventory reservation and reduces reserved_stock and allocated_qty
+      accordingly
+    operations:
+    - cancel_order
+  BR-CANCEL-003:
+    name: Paid cancellation refunds
+    rule: Cancelling an unshipped order with payment_status CAPTURED creates a full refund and sets payment_status REFUNDED
+    operations:
+    - cancel_order
+  BR-RETURN-001:
+    name: Paid order return eligibility
+    rule: Returns require order payment_status CAPTURED or PARTIALLY_REFUNDED
+    operations:
+    - create_return
+    errors:
+    - PAYMENT_NOT_ELIGIBLE
+  BR-RETURN-002:
+    name: Returnable product
+    rule: Product.returnable must be true
+    operations:
+    - create_return
+    errors:
+    - PRODUCT_NOT_RETURNABLE
+  BR-RETURN-003:
+    name: Delivered unreturned quantity limit
+    rule: requested quantity <= delivered quantity - returned_qty - pending REQUESTED/APPROVED return quantity
+    operations:
+    - create_return
+    errors:
+    - RETURN_QUANTITY_EXCEEDED
+  BR-RETURN-004:
+    name: Thirty-day return window
+    rule: Return must be requested within 30 days of latest delivered_at for a delivered shipment containing that item
+    operations:
+    - create_return
+    errors:
+    - RETURN_WINDOW_EXPIRED
+  BR-RETURN-005:
+    name: Return approval/rejection state
+    rule: Only REQUESTED returns can be approved or rejected
+    operations:
+    - approve_return
+    - reject_return
+    errors:
+    - INVALID_RETURN_STATE
+  BR-RETURN-006:
+    name: Receive approved return
+    rule: Only APPROVED returns can be received; receipt increments returned_qty and Product.stock_on_hand
+    operations:
+    - receive_return
+    errors:
+    - INVALID_RETURN_STATE
+  BR-REFUND-001:
+    name: Refund received return
+    rule: Only RECEIVED returns can be refunded; refund amount equals snapshot unit_price * returned quantity
+    operations:
+    - refund_return
+    errors:
+    - INVALID_RETURN_STATE
+  BR-REFUND-002:
+    name: Payment status from cumulative refunds
+    rule: After return refund, payment_status is REFUNDED when cumulative refunds >= order.total_amount; otherwise PARTIALLY_REFUNDED
+    operations:
+    - refund_return
+operations:
+  get_service_metadata:
+    purpose: Return service name, version, Swagger path, and runtime OpenAPI path.
+    http:
+      method: GET
+      path: /
+    contract:
+      openapi_operation_id: root__get
+      summary: Service metadata
+      tags:
+      - meta
+      parameters: []
+      request_body: null
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+    entities:
+    - Service
+    preconditions: []
+    postconditions: []
+    side_effects: []
+    errors: []
+    execution:
+      effect: read_only
+      risk: low
+      confirmation: never
+      idempotency: 'yes'
+    conversation_hints:
+    - what service is this
+    - service version
+    - where are the API docs
+  health_check:
+    purpose: Verify that the application can execute a database query and report healthy status.
+    http:
+      method: GET
+      path: /health
+    contract:
+      openapi_operation_id: health_health_get
+      summary: Service health check
+      tags:
+      - health
+      parameters: []
+      request_body: null
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+    entities:
+    - Service
+    - PostgreSQL
+    preconditions: []
+    postconditions: []
+    side_effects: []
+    errors: []
+    execution:
+      effect: read_only
+      risk: low
+      confirmation: never
+      idempotency: 'yes'
+    conversation_hints:
+    - is the service healthy
+    - check service health
+  list_customers:
+    purpose: List all customers ordered by customer name.
+    http:
+      method: GET
+      path: /customers
+    contract:
+      openapi_operation_id: list_customers_customers_get
+      summary: List customers
+      tags:
+      - catalog
+      parameters: []
+      request_body: null
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/CustomerOut'
+                type: array
+                title: Response List Customers Customers Get
+    entities:
+    - Customer
+    preconditions: []
+    postconditions: []
+    side_effects: []
+    errors: []
+    execution:
+      effect: read_only
+      risk: low
+      confirmation: never
+      idempotency: 'yes'
+    conversation_hints:
+    - list customers
+    - who are the customers
+  create_customer:
+    purpose: Create an active customer with a unique email address.
+    http:
+      method: POST
+      path: /customers
+    contract:
+      openapi_operation_id: create_customer_customers_post
+      summary: Create customer
+      tags:
+      - catalog
+      parameters: []
+      request_body:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CustomerCreate'
+        required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomerOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    entities:
+    - Customer
+    preconditions:
+    - email must not already exist
+    - name and email must satisfy request validation
+    postconditions:
+    - new customer is active by model default
+    side_effects:
+    - inserts a customer record
+    errors:
+    - EMAIL_ALREADY_EXISTS
+    - REQUEST_VALIDATION_ERROR
+    execution:
+      effect: state_change
+      risk: medium
+      confirmation: required
+      idempotency: 'no'
+    conversation_hints:
+    - create customer
+    - add a customer
+  list_products:
+    purpose: List products, by default returning only active products.
+    http:
+      method: GET
+      path: /products
+    contract:
+      openapi_operation_id: list_products_products_get
+      summary: List products
+      tags:
+      - catalog
+      parameters:
+      - name: active_only
+        in: query
+        required: false
+        schema:
+          type: boolean
+          default: true
+          title: Active Only
+      request_body: null
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ProductOut'
+                title: Response List Products Products Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    entities:
+    - Product
+    preconditions: []
+    postconditions: []
+    side_effects: []
+    errors: []
+    execution:
+      effect: read_only
+      risk: low
+      confirmation: never
+      idempotency: 'yes'
+    conversation_hints:
+    - list products
+    - what products are available
+    - show inventory catalog
+  create_product:
+    purpose: Create a catalog product and initial physical stock record.
+    http:
+      method: POST
+      path: /products
+    contract:
+      openapi_operation_id: create_product_products_post
+      summary: Create product
+      tags:
+      - catalog
+      parameters: []
+      request_body:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProductCreate'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    entities:
+    - Product
+    preconditions:
+    - SKU must be unique
+    - unit price must be greater than zero
+    - stock_on_hand must be non-negative
+    - SKU must match configured pattern
+    postconditions:
+    - currency is normalized to uppercase
+    - reserved_stock defaults to 0
+    - active defaults to true
+    side_effects:
+    - inserts a product/catalog inventory record
+    errors:
+    - SKU_ALREADY_EXISTS
+    - REQUEST_VALIDATION_ERROR
+    execution:
+      effect: state_change
+      risk: high
+      confirmation: required
+      idempotency: 'no'
+    conversation_hints:
+    - create product
+    - add SKU
+    - add product to catalog
+  get_product:
+    purpose: Retrieve a product together with stock_on_hand, reserved_stock, and computed available_stock.
+    http:
+      method: GET
+      path: /products/{sku}
+    contract:
+      openapi_operation_id: get_product_products__sku__get
+      summary: Get product and inventory
+      tags:
+      - catalog
+      parameters:
+      - name: sku
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Sku
+      request_body: null
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    entities:
+    - Product
+    preconditions:
+    - product must exist
+    postconditions: []
+    side_effects: []
+    errors:
+    - PRODUCT_NOT_FOUND
+    execution:
+      effect: read_only
+      risk: low
+      confirmation: never
+      idempotency: 'yes'
+    conversation_hints:
+    - show product
+    - check stock for SKU
+    - how many are available
+  adjust_inventory:
+    purpose: Increase or decrease physical stock for a product while preserving existing reservations.
+    http:
+      method: POST
+      path: /inventory/{sku}/adjust
+    contract:
+      openapi_operation_id: adjust_inventory_inventory__sku__adjust_post
+      summary: Adjust physical inventory
+      tags:
+      - catalog
+      parameters:
+      - name: sku
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Sku
+      request_body:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InventoryAdjustment'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    entities:
+    - Product
+    - InventoryReservation
+    preconditions:
+    - product must exist
+    - quantity_delta must be non-zero
+    - resulting stock_on_hand must be >= reserved_stock
+    postconditions:
+    - stock_on_hand changes by quantity_delta
+    side_effects:
+    - modifies shared physical inventory
+    errors:
+    - PRODUCT_NOT_FOUND
+    - INVENTORY_BELOW_RESERVED
+    - REQUEST_VALIDATION_ERROR
+    execution:
+      effect: state_change
+      risk: high
+      confirmation: required
+      idempotency: 'no'
+    conversation_hints:
+    - restock product
+    - adjust inventory
+    - increase stock
+    - decrease stock
+    implementation_notes:
+    - The request reason is validated but is not persisted or emitted as an event in v1.
+  list_orders:
+    purpose: Search orders, newest first, optionally filtered by customer_id and status, with a bounded result limit.
+    http:
+      method: GET
+      path: /orders
+    contract:
+      openapi_operation_id: list_orders_orders_get
+      summary: Search orders
+      tags:
+      - orders
+      parameters:
+      - name: customer_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Customer Id
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          minimum: 1
+          default: 50
+          title: Limit
+      request_body: null
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/OrderOut'
+                title: Response List Orders Orders Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    entities:
+    - Order
+    - Customer
+    preconditions: []
+    postconditions: []
+    side_effects: []
+    errors: []
+    execution:
+      effect: read_only
+      risk: low
+      confirmation: never
+      idempotency: 'yes'
+    conversation_hints:
+    - list orders
+    - my latest order
+    - orders for customer
+    - orders with status
+    implementation_notes:
+    - status query text is uppercased only by caller convention; the router compares the supplied string directly and does
+      not validate it against OrderStatus.
+  create_order:
+    purpose: Create a DRAFT order for an active customer.
+    http:
+      method: POST
+      path: /orders
+    contract:
+      openapi_operation_id: create_order_orders_post
+      summary: Create draft order
+      tags:
+      - orders
+      parameters: []
+      request_body:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderCreate'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    entities:
+    - Order
+    - Customer
+    preconditions:
+    - customer must exist and be active
+    - shipping address length 10..300
+    - currency length exactly 3
+    postconditions:
+    - order status is DRAFT
+    - payment status is NONE
+    - currency is normalized to uppercase
+    - total_amount starts at 0.00
+    side_effects:
+    - creates ORDER_CREATED event
+    errors:
+    - INVALID_CUSTOMER
+    - REQUEST_VALIDATION_ERROR
+    execution:
+      effect: state_change
+      risk: low
+      confirmation: never
+      idempotency: 'no'
+    conversation_hints:
+    - create order
+    - start a new order
+    - new draft order
+  get_order:
+    purpose: Retrieve an order and its line items.
+    http:
+      method: GET
+      path: /orders/{order_id}
+    contract:
+      openapi_operation_id: get_order_orders__order_id__get
+      summary: Get order
+      tags:
+      - orders
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Order Id
+      request_body: null
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    entities:
+    - Order
+    - OrderItem
+    preconditions:
+    - order must exist
+    postconditions: []
+    side_effects: []
+    errors:
+    - ORDER_NOT_FOUND
+    execution:
+      effect: read_only
+      risk: low
+      confirmation: never
+      idempotency: 'yes'
+    conversation_hints:
+    - show order
+    - order details
+    - what is happening with order
+  add_order_item:
+    purpose: Add quantity of a product to a DRAFT order; repeated SKU additions increase the existing line quantity.
+    http:
+      method: POST
+      path: /orders/{order_id}/items
+    contract:
+      openapi_operation_id: add_item_orders__order_id__items_post
+      summary: Add item to draft order
+      tags:
+      - orders
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Order Id
+      request_body:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderItemCreate'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    entities:
+    - Order
+    - OrderItem
+    - Product
+    preconditions:
+    - order must exist
+    - order status must be DRAFT
+    - product must exist and be active
+    - product currency must equal order currency
+    - quantity 1..100 per request
+    postconditions:
+    - order total is recalculated from current non-cancelled quantities
+    side_effects:
+    - creates or increments an OrderItem
+    - creates ITEM_ADDED event
+    errors:
+    - ORDER_NOT_FOUND
+    - ORDER_NOT_EDITABLE
+    - INVALID_PRODUCT
+    - CURRENCY_MISMATCH
+    - REQUEST_VALIDATION_ERROR
+    execution:
+      effect: state_change
+      risk: low
+      confirmation: never
+      idempotency: 'no'
+    conversation_hints:
+    - add product to order
+    - add two monitors
+    - increase item quantity
+  remove_order_item:
+    purpose: Remove an entire line item from a DRAFT order.
+    http:
+      method: DELETE
+      path: /orders/{order_id}/items/{item_id}
+    contract:
+      openapi_operation_id: remove_item_orders__order_id__items__item_id__delete
+      summary: Remove item from draft order
+      tags:
+      - orders
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Order Id
+      - name: item_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Item Id
+      request_body: null
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    entities:
+    - Order
+    - OrderItem
+    preconditions:
+    - order must exist
+    - order status must be DRAFT
+    - item must belong to order
+    postconditions:
+    - order total is recalculated
+    side_effects:
+    - deletes OrderItem
+    - creates ITEM_REMOVED event
+    errors:
+    - ORDER_NOT_FOUND
+    - ORDER_NOT_EDITABLE
+    - ORDER_ITEM_NOT_FOUND
+    execution:
+      effect: destructive
+      risk: medium
+      confirmation: required
+      idempotency: no; a repeated request fails because the item no longer exists
+    conversation_hints:
+    - remove item from order
+    - delete this line item
+  submit_order:
+    purpose: Submit a non-empty DRAFT order and freeze normal line-item editing.
+    http:
+      method: POST
+      path: /orders/{order_id}/submit
+    contract:
+      openapi_operation_id: submit_orders__order_id__submit_post
+      summary: Submit order
+      tags:
+      - orders
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Order Id
+      request_body: null
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    entities:
+    - Order
+    - OrderItem
+    preconditions:
+    - order must exist
+    - status must be DRAFT
+    - order must contain at least one item
+    - total_amount must be > 0
+    postconditions:
+    - order status becomes SUBMITTED
+    side_effects:
+    - creates ORDER_SUBMITTED event
+    errors:
+    - ORDER_NOT_FOUND
+    - INVALID_ORDER_STATE
+    - EMPTY_ORDER
+    - INVALID_ORDER_TOTAL
+    execution:
+      effect: state_change
+      risk: medium
+      confirmation: required
+      idempotency: no; repeat call returns INVALID_ORDER_STATE
+    conversation_hints:
+    - submit order
+    - place this draft order
+    - finish editing order
+  capture_payment:
+    purpose: Simulate capturing payment for a SUBMITTED order.
+    http:
+      method: POST
+      path: /orders/{order_id}/capture-payment
+    contract:
+      openapi_operation_id: capture_payment_orders__order_id__capture_payment_post
+      summary: Capture simulated payment
+      tags:
+      - orders
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Order Id
+      request_body: null
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    entities:
+    - Order
+    - Payment
+    preconditions:
+    - order must exist
+    - order status must be SUBMITTED
+    - payment_status must be NONE
+    postconditions:
+    - payment_status becomes CAPTURED
+    - order status becomes PAID
+    side_effects:
+    - creates PAYMENT_CAPTURED event
+    - no external payment processor is called
+    errors:
+    - ORDER_NOT_FOUND
+    - INVALID_ORDER_STATE
+    - PAYMENT_ALREADY_PROCESSED
+    execution:
+      effect: financial_simulation
+      risk: high
+      confirmation: required
+      idempotency: no; repeat call is rejected
+    conversation_hints:
+    - capture payment
+    - pay for the order
+    - charge this order
+  allocate_inventory:
+    purpose: Reserve physical inventory for unallocated order quantities, optionally allowing partial allocation.
+    http:
+      method: POST
+      path: /orders/{order_id}/allocate
+    contract:
+      openapi_operation_id: allocate_orders__order_id__allocate_post
+      summary: Reserve inventory for order
+      tags:
+      - orders
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Order Id
+      request_body:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AllocationRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    entities:
+    - Order
+    - OrderItem
+    - Product
+    - InventoryReservation
+    preconditions:
+    - order must exist
+    - status must be PAID or PARTIALLY_ALLOCATED
+    postconditions:
+    - each reserved quantity increases Product.reserved_stock and OrderItem.allocated_qty
+    - creates ACTIVE InventoryReservation records
+    - order becomes PAID if nothing allocated, PARTIALLY_ALLOCATED if incomplete, or ALLOCATED if complete
+    side_effects:
+    - creates INVENTORY_RESERVED event per allocated item
+    errors:
+    - ORDER_NOT_FOUND
+    - INVALID_ORDER_STATE
+    - INSUFFICIENT_INVENTORY
+    execution:
+      effect: state_change
+      risk: medium
+      confirmation: conditional
+      idempotency: conditionally; repeated calls allocate only remaining unallocated quantities while state allows it
+    conversation_hints:
+    - reserve inventory
+    - allocate stock
+    - allocate whatever is available
+    - fully allocate order
+    implementation_notes:
+    - allow_partial defaults to true. With allow_partial=false any shortage rejects the whole allocation attempt before reservations
+      are written.
+  cancel_order:
+    purpose: Fully cancel an order only if no units have shipped.
+    http:
+      method: POST
+      path: /orders/{order_id}/cancel
+    contract:
+      openapi_operation_id: cancel_orders__order_id__cancel_post
+      summary: Cancel unshipped order
+      tags:
+      - orders
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Order Id
+      request_body:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CancelOrderRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    entities:
+    - Order
+    - OrderItem
+    - InventoryReservation
+    - Refund
+    preconditions:
+    - order must exist
+    - no OrderItem.shipped_qty may be > 0
+    postconditions:
+    - all active reservation quantities are released
+    - each item.cancelled_qty becomes item.quantity
+    - order status becomes CANCELLED
+    - if payment was CAPTURED a full refund record is created and payment_status becomes REFUNDED
+    side_effects:
+    - creates ORDER_CANCELLED event
+    - may create REFUND_COMPLETED event and Refund
+    errors:
+    - ORDER_NOT_FOUND
+    - ORDER_ALREADY_SHIPPED
+    - ORDER_ALREADY_DELIVERED
+    execution:
+      effect: destructive
+      risk: high
+      confirmation: required
+      idempotency: yes once CANCELLED; returns current cancelled order
+    conversation_hints:
+    - cancel order
+    - stop this order
+    - cancel everything before shipping
+    implementation_notes:
+    - If the order is already CANCELLED the current order is returned without another event or refund.
+    - Because the shipped-quantity check precedes the DELIVERED-state check, normally delivered orders are expected to produce
+      ORDER_ALREADY_SHIPPED; ORDER_ALREADY_DELIVERED appears effectively unreachable for a consistent delivered order.
+  get_order_timeline:
+    purpose: Return chronological business events for an order.
+    http:
+      method: GET
+      path: /orders/{order_id}/timeline
+    contract:
+      openapi_operation_id: timeline_orders__order_id__timeline_get
+      summary: Get order business-event timeline
+      tags:
+      - orders
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Order Id
+      request_body: null
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/EventOut'
+                title: Response Timeline Orders  Order Id  Timeline Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    entities:
+    - Order
+    - OrderEvent
+    preconditions:
+    - order must exist
+    postconditions: []
+    side_effects: []
+    errors:
+    - ORDER_NOT_FOUND
+    execution:
+      effect: read_only
+      risk: low
+      confirmation: never
+      idempotency: 'yes'
+    conversation_hints:
+    - what happened to order
+    - order history
+    - timeline
+    - why is order in this state
+  list_shipments:
+    purpose: List shipments for an order in shipped_at order.
+    http:
+      method: GET
+      path: /orders/{order_id}/shipments
+    contract:
+      openapi_operation_id: list_shipments_orders__order_id__shipments_get
+      summary: List shipments for order
+      tags:
+      - shipments
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Order Id
+      request_body: null
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ShipmentOut'
+                title: Response List Shipments Orders  Order Id  Shipments Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    entities:
+    - Order
+    - Shipment
+    - ShipmentItem
+    preconditions:
+    - order must exist
+    postconditions: []
+    side_effects: []
+    errors:
+    - ORDER_NOT_FOUND
+    execution:
+      effect: read_only
+      risk: low
+      confirmation: never
+      idempotency: 'yes'
+    conversation_hints:
+    - show shipments
+    - packages for order
+    - what has shipped
+  create_shipment:
+    purpose: Create a shipment using allocated but not-yet-shipped quantities.
+    http:
+      method: POST
+      path: /orders/{order_id}/shipments
+    contract:
+      openapi_operation_id: create_shipment_orders__order_id__shipments_post
+      summary: Create shipment from allocated items
+      tags:
+      - shipments
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Order Id
+      request_body:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ShipmentCreate'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShipmentOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    entities:
+    - Order
+    - Shipment
+    - ShipmentItem
+    - OrderItem
+    - InventoryReservation
+    - Product
+    preconditions:
+    - order must exist
+    - order status must be ALLOCATED, PARTIALLY_ALLOCATED, or PARTIALLY_SHIPPED
+    - request must contain at least one shipment line
+    - each order_item_id may appear at most once
+    - requested quantity must not exceed allocated_qty - shipped_qty
+    postconditions:
+    - shipment starts in SHIPPED state
+    - active reservations are consumed FIFO by created_at
+    - Product.reserved_stock decreases by shipped quantity
+    - Product.stock_on_hand decreases by shipped quantity
+    - OrderItem.shipped_qty increases
+    - order becomes SHIPPED when every non-cancelled required unit is shipped, otherwise PARTIALLY_SHIPPED
+    side_effects:
+    - creates ITEM_SHIPPED events
+    - creates SHIPMENT_CREATED event
+    - decrements physical inventory
+    errors:
+    - ORDER_NOT_FOUND
+    - INVALID_ORDER_STATE
+    - DUPLICATE_SHIPMENT_LINE
+    - ORDER_ITEM_NOT_FOUND
+    - QUANTITY_NOT_ALLOCATED
+    - RESERVATION_INCONSISTENCY
+    - REQUEST_VALIDATION_ERROR
+    execution:
+      effect: state_change
+      risk: high
+      confirmation: required
+      idempotency: 'no'
+    conversation_hints:
+    - ship allocated items
+    - create shipment
+    - ship only the monitor
+    - ship everything allocated
+  get_shipment:
+    purpose: Retrieve one shipment and its shipment lines.
+    http:
+      method: GET
+      path: /shipments/{shipment_id}
+    contract:
+      openapi_operation_id: get_shipment_shipments__shipment_id__get
+      summary: Get shipment
+      tags:
+      - shipments
+      parameters:
+      - name: shipment_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Shipment Id
+      request_body: null
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShipmentOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    entities:
+    - Shipment
+    - ShipmentItem
+    preconditions:
+    - shipment must exist
+    postconditions: []
+    side_effects: []
+    errors:
+    - SHIPMENT_NOT_FOUND
+    execution:
+      effect: read_only
+      risk: low
+      confirmation: never
+      idempotency: 'yes'
+    conversation_hints:
+    - show shipment
+    - tracking details
+  mark_shipment_delivered:
+    purpose: Mark a shipment delivered and, if all required units are shipped and all shipments are delivered, mark the order
+      DELIVERED.
+    http:
+      method: POST
+      path: /shipments/{shipment_id}/mark-delivered
+    contract:
+      openapi_operation_id: mark_delivered_shipments__shipment_id__mark_delivered_post
+      summary: Mark shipment delivered
+      tags:
+      - shipments
+      parameters:
+      - name: shipment_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Shipment Id
+      request_body: null
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShipmentOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    entities:
+    - Shipment
+    - Order
+    preconditions:
+    - shipment must exist
+    postconditions:
+    - shipment status becomes DELIVERED
+    - delivered_at is set when transitioning
+    - order becomes DELIVERED only when shipped quantity equals required non-cancelled quantity and every order shipment is
+      DELIVERED
+    side_effects:
+    - creates SHIPMENT_DELIVERED event on first transition
+    - may create ORDER_DELIVERED event
+    errors:
+    - SHIPMENT_NOT_FOUND
+    execution:
+      effect: state_change
+      risk: high
+      confirmation: required
+      idempotency: yes; already DELIVERED shipment is returned unchanged
+    conversation_hints:
+    - mark package delivered
+    - shipment arrived
+    - complete delivery
+  list_returns:
+    purpose: List return requests for an order by requested_at.
+    http:
+      method: GET
+      path: /orders/{order_id}/returns
+    contract:
+      openapi_operation_id: list_returns_orders__order_id__returns_get
+      summary: List returns for order
+      tags:
+      - returns
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Order Id
+      request_body: null
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ReturnOut'
+                title: Response List Returns Orders  Order Id  Returns Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    entities:
+    - Order
+    - ReturnRequest
+    - ReturnItem
+    preconditions:
+    - order must exist
+    postconditions: []
+    side_effects: []
+    errors:
+    - ORDER_NOT_FOUND
+    execution:
+      effect: read_only
+      risk: low
+      confirmation: never
+      idempotency: 'yes'
+    conversation_hints:
+    - show returns
+    - return requests for order
+  create_return:
+    purpose: Request return of delivered and eligible order-item quantities within the return window.
+    http:
+      method: POST
+      path: /orders/{order_id}/returns
+    contract:
+      openapi_operation_id: create_return_orders__order_id__returns_post
+      summary: Request return for delivered items
+      tags:
+      - returns
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Order Id
+      request_body:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReturnCreate'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReturnOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    entities:
+    - Order
+    - OrderItem
+    - Product
+    - Shipment
+    - ReturnRequest
+    - ReturnItem
+    preconditions:
+    - order must exist
+    - payment_status must be CAPTURED or PARTIALLY_REFUNDED
+    - each referenced item must belong to the order
+    - product must be returnable
+    - quantity must not exceed delivered minus already returned minus pending REQUESTED/APPROVED quantity
+    - at least one delivered quantity must exist for each line
+    - request must be within 30 days of the latest delivered shipment containing that order item
+    postconditions:
+    - ReturnRequest starts REQUESTED
+    - ReturnItem records are created
+    side_effects:
+    - creates RETURN_REQUESTED event
+    errors:
+    - ORDER_NOT_FOUND
+    - PAYMENT_NOT_ELIGIBLE
+    - ORDER_ITEM_NOT_FOUND
+    - PRODUCT_NOT_RETURNABLE
+    - RETURN_QUANTITY_EXCEEDED
+    - NOTHING_DELIVERED
+    - RETURN_WINDOW_EXPIRED
+    - REQUEST_VALIDATION_ERROR
+    execution:
+      effect: state_change
+      risk: medium
+      confirmation: required
+      idempotency: 'no'
+    conversation_hints:
+    - return item
+    - return damaged monitor
+    - send product back
+    implementation_notes:
+    - The implementation does not explicitly reject duplicate order_item_id entries within the same ReturnCreate request.
+      A conversational executor should normalize/merge duplicate return lines before invocation.
+    - The 30-day window is measured from the maximum delivered_at timestamp for shipments containing the item, which effectively
+      uses the latest delivery when an item was delivered in multiple shipments.
+  get_return:
+    purpose: Retrieve a return request and its return lines.
+    http:
+      method: GET
+      path: /returns/{return_id}
+    contract:
+      openapi_operation_id: get_return_returns__return_id__get
+      summary: Get return
+      tags:
+      - returns
+      parameters:
+      - name: return_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Return Id
+      request_body: null
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReturnOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    entities:
+    - ReturnRequest
+    - ReturnItem
+    preconditions:
+    - return must exist
+    postconditions: []
+    side_effects: []
+    errors:
+    - RETURN_NOT_FOUND
+    execution:
+      effect: read_only
+      risk: low
+      confirmation: never
+      idempotency: 'yes'
+    conversation_hints:
+    - show return
+    - return status
+  approve_return:
+    purpose: Approve a REQUESTED return.
+    http:
+      method: POST
+      path: /returns/{return_id}/approve
+    contract:
+      openapi_operation_id: approve_returns__return_id__approve_post
+      summary: Approve requested return
+      tags:
+      - returns
+      parameters:
+      - name: return_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Return Id
+      request_body: null
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReturnOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    entities:
+    - ReturnRequest
+    - Order
+    preconditions:
+    - return must exist
+    - return status must be REQUESTED
+    postconditions:
+    - return status becomes APPROVED
+    - approved_at is set
+    side_effects:
+    - creates RETURN_APPROVED event
+    errors:
+    - RETURN_NOT_FOUND
+    - INVALID_RETURN_STATE
+    execution:
+      effect: state_change
+      risk: medium
+      confirmation: required
+      idempotency: no; repeat call is rejected
+    conversation_hints:
+    - approve return
+    - authorize return
+  reject_return:
+    purpose: Reject a REQUESTED return with a reason.
+    http:
+      method: POST
+      path: /returns/{return_id}/reject
+    contract:
+      openapi_operation_id: reject_returns__return_id__reject_post
+      summary: Reject requested return
+      tags:
+      - returns
+      parameters:
+      - name: return_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Return Id
+      request_body:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RejectReturnRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReturnOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    entities:
+    - ReturnRequest
+    - Order
+    preconditions:
+    - return must exist
+    - return status must be REQUESTED
+    postconditions:
+    - return status becomes REJECTED
+    side_effects:
+    - creates RETURN_REJECTED event containing rejection reason
+    errors:
+    - RETURN_NOT_FOUND
+    - INVALID_RETURN_STATE
+    - REQUEST_VALIDATION_ERROR
+    execution:
+      effect: destructive
+      risk: medium
+      confirmation: required
+      idempotency: no; repeat call is rejected
+    conversation_hints:
+    - reject return
+    - deny return request
+  receive_return:
+    purpose: Receive an APPROVED return and restock all returned quantities.
+    http:
+      method: POST
+      path: /returns/{return_id}/receive
+    contract:
+      openapi_operation_id: receive_returns__return_id__receive_post
+      summary: Receive approved return and restock inventory
+      tags:
+      - returns
+      parameters:
+      - name: return_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Return Id
+      request_body: null
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReturnOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    entities:
+    - ReturnRequest
+    - ReturnItem
+    - OrderItem
+    - Product
+    preconditions:
+    - return must exist
+    - return status must be APPROVED
+    postconditions:
+    - each OrderItem.returned_qty increases by return quantity
+    - each Product.stock_on_hand increases by return quantity
+    - return status becomes RECEIVED
+    - received_at is set
+    side_effects:
+    - restocks physical inventory
+    - creates RETURN_RECEIVED event
+    errors:
+    - RETURN_NOT_FOUND
+    - INVALID_RETURN_STATE
+    execution:
+      effect: state_change
+      risk: high
+      confirmation: required
+      idempotency: no; repeat call is rejected
+    conversation_hints:
+    - receive returned goods
+    - restock returned items
+  refund_return:
+    purpose: Create a completed refund for a RECEIVED return.
+    http:
+      method: POST
+      path: /returns/{return_id}/refund
+    contract:
+      openapi_operation_id: refund_returns__return_id__refund_post
+      summary: Refund a received return
+      tags:
+      - returns
+      parameters:
+      - name: return_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Return Id
+      request_body: null
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefundOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    entities:
+    - ReturnRequest
+    - Refund
+    - Order
+    preconditions:
+    - return must exist
+    - return status must be RECEIVED
+    postconditions:
+    - refund amount equals sum(unit_price * returned line quantity)
+    - Refund status is COMPLETED
+    - return status becomes REFUNDED
+    - order payment_status becomes REFUNDED if cumulative refunds >= order.total_amount, otherwise PARTIALLY_REFUNDED
+    side_effects:
+    - creates Refund record
+    - creates REFUND_COMPLETED event
+    - no external payment processor is called
+    errors:
+    - RETURN_NOT_FOUND
+    - INVALID_RETURN_STATE
+    execution:
+      effect: financial_simulation
+      risk: critical
+      confirmation: required
+      idempotency: no; after success return state is REFUNDED and repeat call is rejected
+    conversation_hints:
+    - refund return
+    - issue refund
+    - refund returned item
+  list_refunds:
+    purpose: List completed refund records for an order by created_at.
+    http:
+      method: GET
+      path: /orders/{order_id}/refunds
+    contract:
+      openapi_operation_id: list_refunds_orders__order_id__refunds_get
+      summary: List refunds for order
+      tags:
+      - returns
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Order Id
+      request_body: null
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RefundOut'
+                title: Response List Refunds Orders  Order Id  Refunds Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    entities:
+    - Order
+    - Refund
+    preconditions:
+    - order must exist
+    postconditions: []
+    side_effects: []
+    errors:
+    - ORDER_NOT_FOUND
+    execution:
+      effect: read_only
+      risk: low
+      confirmation: never
+      idempotency: 'yes'
+    conversation_hints:
+    - show refunds
+    - how much has been refunded
+workflows:
+  create_draft_order:
+    goal: Create a modifiable order draft.
+    steps:
+    - operation: create_order
+    - repeat: add_order_item
+      until: all desired products are present
+    terminal_condition: Order.status == DRAFT
+  submit_and_pay_order:
+    goal: Move a valid draft to paid state.
+    steps:
+    - operation: get_order
+      reason: inspect current state and items
+    - operation: submit_order
+      when: status == DRAFT
+    - operation: capture_payment
+      when: status == SUBMITTED
+    terminal_condition: Order.status == PAID and payment_status == CAPTURED
+  allocate_order_inventory:
+    goal: Reserve inventory for a paid order.
+    steps:
+    - operation: get_order
+    - operation: allocate_inventory
+      arguments:
+        allow_partial: choose from user intent; true if user permits partial allocation
+    terminal_condition: Order.status in [PAID, PARTIALLY_ALLOCATED, ALLOCATED]
+  fulfill_order:
+    goal: Progress a submitted/paid order toward shipment.
+    steps:
+    - operation: get_order
+    - operation: capture_payment
+      when: status == SUBMITTED
+    - operation: allocate_inventory
+      when: status in [PAID, PARTIALLY_ALLOCATED]
+    - operation: get_order
+      reason: resolve order_item IDs and allocated quantities
+    - operation: create_shipment
+      when: allocated unshipped quantity exists
+      requires_user_or_policy_input:
+      - carrier
+      - tracking_number
+      - which allocated quantities to ship
+    notes:
+    - There is no single fulfill endpoint.
+    - After a partial shipment the v1 service does not permit new allocation because PARTIALLY_SHIPPED is not an allocation
+      state.
+  deliver_shipment:
+    goal: Record delivery and potentially complete the order.
+    steps:
+    - operation: get_shipment
+    - operation: mark_shipment_delivered
+  cancel_unshipped_order:
+    goal: Cancel an order before anything ships.
+    steps:
+    - operation: get_order
+      reason: verify shipped quantities/current state
+    - operation: cancel_order
+      confirmation: required
+    alternative: If anything has shipped, do not call cancel_order; after delivery use return_delivered_items.
+  return_delivered_items:
+    goal: Request a return for delivered eligible quantities.
+    steps:
+    - operation: get_order
+    - operation: list_shipments
+      reason: establish delivery context if needed
+    - operation: list_returns
+      reason: understand existing/pending return context if needed
+    - operation: create_return
+      confirmation: required
+  process_return_to_refund:
+    goal: Process an existing return through approval, receipt, and refund.
+    steps:
+    - operation: get_return
+    - operation: approve_return
+      when: status == REQUESTED and approval intended
+      alternative_operation: reject_return
+    - operation: receive_return
+      when: status == APPROVED and goods are actually received
+    - operation: refund_return
+      when: status == RECEIVED
+      confirmation: required
+    terminal_condition: Return.status == REFUNDED and a Refund exists
+  explain_order_state:
+    goal: Explain what happened and what can happen next.
+    steps:
+    - operation: get_order
+    - operation: get_order_timeline
+    - optional_operation: list_shipments
+    - optional_operation: list_returns
+    - optional_operation: list_refunds
+    execution: read_only
+errors:
+  format:
+    error:
+      code: machine-readable stable business code
+      message: human-readable explanation
+      details: structured operation-specific details
+  catalog:
+    REQUEST_VALIDATION_ERROR:
+      http_status: 422
+      category: transport_validation
+      meaning: FastAPI/Pydantic rejected request shape or field constraints.
+      retryable: after correcting request
+    INVALID_CUSTOMER:
+      http_status: 400
+      category: business_validation
+      meaning: Customer does not exist or is inactive.
+      retryable: after choosing/creating an active customer
+    INVALID_PRODUCT:
+      http_status: 400
+      category: business_validation
+      meaning: Product does not exist or is inactive.
+      retryable: after choosing an active product
+    DUPLICATE_SHIPMENT_LINE:
+      http_status: 400
+      category: business_validation
+      meaning: Same order item appears more than once in one shipment request.
+      retryable: after merging/removing duplicate lines
+    ORDER_NOT_FOUND:
+      http_status: 404
+      category: not_found
+      meaning: Order ID does not exist.
+      retryable: after resolving a valid order
+    ORDER_ITEM_NOT_FOUND:
+      http_status: 404
+      category: not_found
+      meaning: Order item does not belong to the referenced order.
+      retryable: after resolving a valid item
+    PRODUCT_NOT_FOUND:
+      http_status: 404
+      category: not_found
+      meaning: Product SKU does not exist.
+      retryable: after resolving a valid SKU
+    SHIPMENT_NOT_FOUND:
+      http_status: 404
+      category: not_found
+      meaning: Shipment ID does not exist.
+      retryable: after resolving a valid shipment
+    RETURN_NOT_FOUND:
+      http_status: 404
+      category: not_found
+      meaning: Return ID does not exist.
+      retryable: after resolving a valid return
+    EMAIL_ALREADY_EXISTS:
+      http_status: 409
+      category: conflict
+      meaning: Customer email is already in use.
+      retryable: with a different email
+    SKU_ALREADY_EXISTS:
+      http_status: 409
+      category: conflict
+      meaning: Product SKU already exists.
+      retryable: with a different SKU or use existing product
+    INVENTORY_BELOW_RESERVED:
+      http_status: 409
+      category: business_rule
+      meaning: Inventory adjustment would make stock_on_hand lower than reserved_stock.
+      retryable: with a smaller negative adjustment or after reservations are consumed/released
+    ORDER_NOT_EDITABLE:
+      http_status: 409
+      category: business_rule
+      meaning: Line-item editing is allowed only in DRAFT.
+      retryable: not without creating/using a draft order
+    CURRENCY_MISMATCH:
+      http_status: 409
+      category: business_rule
+      meaning: Product currency differs from order currency.
+      retryable: with a matching-currency product/order
+    INVALID_ORDER_STATE:
+      http_status: 409
+      category: state_machine
+      meaning: Requested operation is not allowed from the current Order.status.
+      retryable: after inspecting state and performing required preceding transition
+    EMPTY_ORDER:
+      http_status: 409
+      category: business_rule
+      meaning: Order has no items and cannot be submitted.
+      retryable: after adding at least one item
+    INVALID_ORDER_TOTAL:
+      http_status: 409
+      category: business_rule
+      meaning: Order total must be greater than zero to submit.
+      retryable: after correcting order contents
+    PAYMENT_ALREADY_PROCESSED:
+      http_status: 409
+      category: state_machine
+      meaning: Payment status is not NONE; capture cannot be repeated.
+      retryable: no for the same payment state
+    INSUFFICIENT_INVENTORY:
+      http_status: 409
+      category: inventory
+      meaning: At least one required item lacks enough available stock when allow_partial=false.
+      details: details.shortages entries contain sku, required, available
+      retryable: after restock, order change, or with allow_partial=true
+    QUANTITY_NOT_ALLOCATED:
+      http_status: 409
+      category: inventory
+      meaning: Shipment requests more quantity than remains allocated and unshipped.
+      retryable: with a lower quantity or after valid allocation
+    ORDER_ALREADY_SHIPPED:
+      http_status: 409
+      category: state_machine
+      meaning: At least one order quantity has shipped; full cancellation is forbidden.
+      retryable: use return workflow after delivery
+    ORDER_ALREADY_DELIVERED:
+      http_status: 409
+      category: state_machine
+      meaning: Delivered orders cannot be cancelled.
+      retryable: use return workflow
+      note: Likely shadowed by ORDER_ALREADY_SHIPPED for consistent delivered orders.
+    PAYMENT_NOT_ELIGIBLE:
+      http_status: 409
+      category: business_rule
+      meaning: Order payment status is not CAPTURED or PARTIALLY_REFUNDED; return cannot be requested.
+      retryable: only when payment state becomes eligible
+    PRODUCT_NOT_RETURNABLE:
+      http_status: 409
+      category: return_policy
+      meaning: Product is explicitly non-returnable.
+      retryable: no for this product
+    RETURN_QUANTITY_EXCEEDED:
+      http_status: 409
+      category: return_policy
+      meaning: Requested return quantity exceeds delivered quantity still eligible for return.
+      details: delivered, already_returned, pending, available
+      retryable: with quantity <= available
+    NOTHING_DELIVERED:
+      http_status: 409
+      category: return_policy
+      meaning: No delivered quantity exists for the item.
+      retryable: after delivery
+    RETURN_WINDOW_EXPIRED:
+      http_status: 409
+      category: return_policy
+      meaning: Return requested more than 30 days after latest delivery for the item.
+      retryable: no under current v1 policy
+    INVALID_RETURN_STATE:
+      http_status: 409
+      category: state_machine
+      meaning: Return operation is not permitted from current ReturnStatus.
+      retryable: after inspecting required return lifecycle
+    RESERVATION_INCONSISTENCY:
+      http_status: 500
+      category: internal_invariant
+      meaning: OrderItem allocated quantity has no matching ACTIVE reservation quantity.
+      retryable: do not automatically retry; surface as service invariant failure
+business_events:
+  ORDER_CREATED: Draft order created.
+  ITEM_ADDED: Quantity added to an order item.
+  ITEM_REMOVED: Draft order item removed.
+  ORDER_SUBMITTED: Draft submitted with captured total.
+  PAYMENT_CAPTURED: Simulated payment captured.
+  INVENTORY_RESERVED: Inventory quantity reserved.
+  ITEM_SHIPPED: Allocated item quantity shipped.
+  SHIPMENT_CREATED: Shipment record created.
+  SHIPMENT_DELIVERED: Shipment marked delivered.
+  ORDER_DELIVERED: Order fulfillment completed because all required units and shipments are delivered.
+  ORDER_CANCELLED: Order cancelled with supplied reason.
+  RETURN_REQUESTED: Return request created.
+  RETURN_APPROVED: Return approved.
+  RETURN_REJECTED: Return rejected with reason.
+  RETURN_RECEIVED: Return received and inventory restocked.
+  REFUND_COMPLETED: Cancellation or return refund completed.
+conversation:
+  primary_intents:
+    service_knowledge:
+    - what does this service do
+    - what endpoints exist
+    - what can I do with orders
+    - explain return rules
+    catalog_queries:
+    - list customers
+    - list products
+    - check inventory
+    order_queries:
+    - show order
+    - latest order
+    - why is my order in this state
+    - what has shipped
+    order_commands:
+    - create order
+    - add/remove item
+    - submit
+    - capture payment
+    - allocate
+    - cancel
+    fulfillment_commands:
+    - ship allocated items
+    - mark shipment delivered
+    return_commands:
+    - request return
+    - approve/reject return
+    - receive return
+    - refund return
+  terminology:
+    order:
+      synonyms:
+      - purchase
+      - customer order
+    order_item:
+      synonyms:
+      - line item
+      - item in the order
+      - order line
+    product:
+      synonyms:
+      - SKU
+      - catalog item
+    inventory_allocation:
+      synonyms:
+      - reserve inventory
+      - reserve stock
+      - allocate stock
+    shipment:
+      synonyms:
+      - package
+      - fulfillment shipment
+    return_request:
+      synonyms:
+      - return
+      - RMA-like request
+    refund:
+      synonyms:
+      - money back
+      - reimbursement
+      note: simulated; no external payment network
+  entity_resolution:
+    explicit_id_prefixes:
+      CUS-: Customer
+      ORD-: Order
+      ITM-: OrderItem
+      RSV-: InventoryReservation
+      SHP-: Shipment
+      RET-: ReturnRequest
+      RFD-: Refund
+      EVT-: OrderEvent
+    latest_order:
+      phrases:
+      - my last order
+      - latest order
+      - most recent order
+      plan:
+        operation: list_orders
+        filter: customer_id if known from conversational identity/context
+        ordering: API returns created_at descending
+        select: first result
+      ambiguity: If customer identity is not established and multiple customers exist, ask which customer; do not assume demo
+        identity.
+    current_context:
+      phrases:
+      - it
+      - this order
+      - that order
+      - this shipment
+      - that return
+      - the item
+      strategy: resolve against most recently referenced compatible entity in conversation state; if multiple compatible entities
+        remain, ask for clarification.
+    product_by_name:
+      strategy: use list_products or known returned catalog records to map user-facing product name to SKU; never invent a
+        SKU.
+    order_item_by_product:
+      strategy: get_order, then match product_name or sku among order.items; if more than one candidate is plausible, ask
+        for clarification.
+  planning_rules:
+  - Never invent entity IDs, SKUs, carrier names, tracking numbers, or current resource state.
+  - Use read operations to resolve references and inspect state before executing state-dependent operations when required
+    context is absent.
+  - Prefer canonical operation IDs in this digest rather than constructing arbitrary HTTP requests.
+  - When an operation fails with a stable business error, explain the business meaning and suggest only alternatives supported
+    by this digest.
+  - Do not treat seeded demo data as guaranteed runtime state; retrieve current data from the API.
+execution_policy:
+  principle: LLM selects canonical operations and arguments; deterministic executor constructs and sends only allowlisted
+    HTTP calls from operations section.
+  arbitrary_http_generation_allowed: false
+  unknown_operation_behavior: refuse execution and explain that the service digest does not define that operation
+  confirmation_levels:
+    never: May execute after clear user intent without a second confirmation.
+    conditional: Executor/policy may require confirmation when scope, quantity, or target is inferred rather than explicit.
+    required: Obtain explicit confirmation after presenting the concrete target and material effect immediately before execution.
+  hard_safety_rules:
+  - Never expose or infer Kubernetes Secret values or database credentials.
+  - Never bypass operation preconditions described in this digest.
+  - Never transform a failed destructive operation into a different destructive operation without user consent.
+  - For confirmation-required operations, confirmation must apply to resolved concrete IDs/quantities, not a vague earlier
+    intent.
+  - Treat refund operations as financial-impact operations even though this demo implementation is simulated.
+api_contract:
+  openapi_version: 3.1.0
+  service_info:
+    title: Order Fulfillment Service
+    description: A realistic demo microservice implementing order creation, simulated payment capture, inventory allocation,
+      partial fulfillment, shipment delivery, cancellation, returns, refunds, and auditable order timelines. Designed as a
+      target service for a conversational API layer.
+    version: 1.0.0
+  default_content_type: application/json
+  schemas:
+    AllocationRequest:
+      properties:
+        allow_partial:
+          type: boolean
+          title: Allow Partial
+          default: true
+      type: object
+      title: AllocationRequest
+    CancelOrderRequest:
+      properties:
+        reason:
+          type: string
+          maxLength: 300
+          minLength: 3
+          title: Reason
+      type: object
+      required:
+      - reason
+      title: CancelOrderRequest
+    CustomerCreate:
+      properties:
+        name:
+          type: string
+          maxLength: 120
+          minLength: 2
+          title: Name
+        email:
+          type: string
+          maxLength: 200
+          minLength: 5
+          title: Email
+      type: object
+      required:
+      - name
+      - email
+      title: CustomerCreate
+    CustomerOut:
+      properties:
+        id:
+          type: string
+          title: Id
+        name:
+          type: string
+          title: Name
+        email:
+          type: string
+          title: Email
+        active:
+          type: boolean
+          title: Active
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+      type: object
+      required:
+      - id
+      - name
+      - email
+      - active
+      - created_at
+      title: CustomerOut
+    EventOut:
+      properties:
+        id:
+          type: string
+          title: Id
+        event_type:
+          type: string
+          title: Event Type
+        description:
+          type: string
+          title: Description
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+      type: object
+      required:
+      - id
+      - event_type
+      - description
+      - created_at
+      title: EventOut
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          type: array
+          title: Detail
+      type: object
+      title: HTTPValidationError
+    InventoryAdjustment:
+      properties:
+        quantity_delta:
+          type: integer
+          title: Quantity Delta
+        reason:
+          type: string
+          maxLength: 200
+          minLength: 3
+          title: Reason
+      type: object
+      required:
+      - quantity_delta
+      - reason
+      title: InventoryAdjustment
+    OrderCreate:
+      properties:
+        customer_id:
+          type: string
+          title: Customer Id
+        shipping_address:
+          type: string
+          maxLength: 300
+          minLength: 10
+          title: Shipping Address
+        currency:
+          type: string
+          maxLength: 3
+          minLength: 3
+          title: Currency
+          default: USD
+      type: object
+      required:
+      - customer_id
+      - shipping_address
+      title: OrderCreate
+    OrderItemCreate:
+      properties:
+        sku:
+          type: string
+          title: Sku
+        quantity:
+          type: integer
+          maximum: 100.0
+          minimum: 1.0
+          title: Quantity
+      type: object
+      required:
+      - sku
+      - quantity
+      title: OrderItemCreate
+    OrderItemOut:
+      properties:
+        id:
+          type: string
+          title: Id
+        sku:
+          type: string
+          title: Sku
+        product_name:
+          type: string
+          title: Product Name
+        quantity:
+          type: integer
+          title: Quantity
+        unit_price:
+          type: string
+          pattern: ^(?!^[-+.]*$)[+-]?0*\d*\.?\d*$
+          title: Unit Price
+        allocated_qty:
+          type: integer
+          title: Allocated Qty
+        shipped_qty:
+          type: integer
+          title: Shipped Qty
+        cancelled_qty:
+          type: integer
+          title: Cancelled Qty
+        returned_qty:
+          type: integer
+          title: Returned Qty
+      type: object
+      required:
+      - id
+      - sku
+      - product_name
+      - quantity
+      - unit_price
+      - allocated_qty
+      - shipped_qty
+      - cancelled_qty
+      - returned_qty
+      title: OrderItemOut
+    OrderOut:
+      properties:
+        id:
+          type: string
+          title: Id
+        customer_id:
+          type: string
+          title: Customer Id
+        status:
+          type: string
+          title: Status
+        payment_status:
+          type: string
+          title: Payment Status
+        currency:
+          type: string
+          title: Currency
+        shipping_address:
+          type: string
+          title: Shipping Address
+        total_amount:
+          type: string
+          pattern: ^(?!^[-+.]*$)[+-]?0*\d*\.?\d*$
+          title: Total Amount
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+        items:
+          items:
+            $ref: '#/components/schemas/OrderItemOut'
+          type: array
+          title: Items
+          default: []
+      type: object
+      required:
+      - id
+      - customer_id
+      - status
+      - payment_status
+      - currency
+      - shipping_address
+      - total_amount
+      - created_at
+      - updated_at
+      title: OrderOut
+    ProductCreate:
+      properties:
+        sku:
+          type: string
+          pattern: ^[A-Z0-9][A-Z0-9_-]{2,39}$
+          title: Sku
+        name:
+          type: string
+          maxLength: 160
+          minLength: 2
+          title: Name
+        unit_price:
+          anyOf:
+          - type: number
+            exclusiveMinimum: 0.0
+          - type: string
+            pattern: ^(?!^[-+.]*$)[+-]?0*\d*\.?\d*$
+          title: Unit Price
+        currency:
+          type: string
+          maxLength: 3
+          minLength: 3
+          title: Currency
+          default: USD
+        stock_on_hand:
+          type: integer
+          minimum: 0.0
+          title: Stock On Hand
+          default: 0
+        returnable:
+          type: boolean
+          title: Returnable
+          default: true
+      type: object
+      required:
+      - sku
+      - name
+      - unit_price
+      title: ProductCreate
+    ProductOut:
+      properties:
+        sku:
+          type: string
+          title: Sku
+        name:
+          type: string
+          title: Name
+        unit_price:
+          type: string
+          pattern: ^(?!^[-+.]*$)[+-]?0*\d*\.?\d*$
+          title: Unit Price
+        currency:
+          type: string
+          title: Currency
+        stock_on_hand:
+          type: integer
+          title: Stock On Hand
+        reserved_stock:
+          type: integer
+          title: Reserved Stock
+        returnable:
+          type: boolean
+          title: Returnable
+        active:
+          type: boolean
+          title: Active
+        available_stock:
+          type: integer
+          title: Available Stock
+      type: object
+      required:
+      - sku
+      - name
+      - unit_price
+      - currency
+      - stock_on_hand
+      - reserved_stock
+      - returnable
+      - active
+      - available_stock
+      title: ProductOut
+    RefundOut:
+      properties:
+        id:
+          type: string
+          title: Id
+        order_id:
+          type: string
+          title: Order Id
+        return_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Return Id
+        amount:
+          type: string
+          pattern: ^(?!^[-+.]*$)[+-]?0*\d*\.?\d*$
+          title: Amount
+        currency:
+          type: string
+          title: Currency
+        status:
+          type: string
+          title: Status
+        reason:
+          type: string
+          title: Reason
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+      type: object
+      required:
+      - id
+      - order_id
+      - return_id
+      - amount
+      - currency
+      - status
+      - reason
+      - created_at
+      title: RefundOut
+    RejectReturnRequest:
+      properties:
+        reason:
+          type: string
+          maxLength: 300
+          minLength: 3
+          title: Reason
+      type: object
+      required:
+      - reason
+      title: RejectReturnRequest
+    ReturnCreate:
+      properties:
+        reason:
+          type: string
+          maxLength: 300
+          minLength: 3
+          title: Reason
+        items:
+          items:
+            $ref: '#/components/schemas/ReturnLineRequest'
+          type: array
+          minItems: 1
+          title: Items
+      type: object
+      required:
+      - reason
+      - items
+      title: ReturnCreate
+    ReturnItemOut:
+      properties:
+        id:
+          type: string
+          title: Id
+        order_item_id:
+          type: string
+          title: Order Item Id
+        quantity:
+          type: integer
+          title: Quantity
+      type: object
+      required:
+      - id
+      - order_item_id
+      - quantity
+      title: ReturnItemOut
+    ReturnLineRequest:
+      properties:
+        order_item_id:
+          type: string
+          title: Order Item Id
+        quantity:
+          type: integer
+          minimum: 1.0
+          title: Quantity
+      type: object
+      required:
+      - order_item_id
+      - quantity
+      title: ReturnLineRequest
+    ReturnOut:
+      properties:
+        id:
+          type: string
+          title: Id
+        order_id:
+          type: string
+          title: Order Id
+        status:
+          type: string
+          title: Status
+        reason:
+          type: string
+          title: Reason
+        requested_at:
+          type: string
+          format: date-time
+          title: Requested At
+        approved_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Approved At
+        received_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Received At
+        items:
+          items:
+            $ref: '#/components/schemas/ReturnItemOut'
+          type: array
+          title: Items
+          default: []
+      type: object
+      required:
+      - id
+      - order_id
+      - status
+      - reason
+      - requested_at
+      - approved_at
+      - received_at
+      title: ReturnOut
+    ShipmentCreate:
+      properties:
+        carrier:
+          type: string
+          maxLength: 80
+          minLength: 2
+          title: Carrier
+        tracking_number:
+          type: string
+          maxLength: 100
+          minLength: 3
+          title: Tracking Number
+        items:
+          items:
+            $ref: '#/components/schemas/ShipmentLineRequest'
+          type: array
+          minItems: 1
+          title: Items
+      type: object
+      required:
+      - carrier
+      - tracking_number
+      - items
+      title: ShipmentCreate
+    ShipmentItemOut:
+      properties:
+        id:
+          type: string
+          title: Id
+        order_item_id:
+          type: string
+          title: Order Item Id
+        quantity:
+          type: integer
+          title: Quantity
+      type: object
+      required:
+      - id
+      - order_item_id
+      - quantity
+      title: ShipmentItemOut
+    ShipmentLineRequest:
+      properties:
+        order_item_id:
+          type: string
+          title: Order Item Id
+        quantity:
+          type: integer
+          minimum: 1.0
+          title: Quantity
+      type: object
+      required:
+      - order_item_id
+      - quantity
+      title: ShipmentLineRequest
+    ShipmentOut:
+      properties:
+        id:
+          type: string
+          title: Id
+        order_id:
+          type: string
+          title: Order Id
+        carrier:
+          type: string
+          title: Carrier
+        tracking_number:
+          type: string
+          title: Tracking Number
+        status:
+          type: string
+          title: Status
+        shipped_at:
+          type: string
+          format: date-time
+          title: Shipped At
+        delivered_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Delivered At
+        items:
+          items:
+            $ref: '#/components/schemas/ShipmentItemOut'
+          type: array
+          title: Items
+          default: []
+      type: object
+      required:
+      - id
+      - order_id
+      - carrier
+      - tracking_number
+      - status
+      - shipped_at
+      - delivered_at
+      title: ShipmentOut
+    ValidationError:
+      properties:
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          type: array
+          title: Location
+        msg:
+          type: string
+          title: Message
+        type:
+          type: string
+          title: Error Type
+        input:
+          title: Input
+        ctx:
+          type: object
+          title: Context
+      type: object
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError
+  business_error_envelope:
+    type: object
+    shape:
+      error:
+        code: string
+        message: string
+        details: object
+    note: BusinessError responses use this stable envelope; OpenAPI v1 does not enumerate all business error responses.
+  ref_resolution:
+    original_openapi_ref_prefix: '#/components/schemas/'
+    digest_location: api_contract.schemas
+    rule: 'A reference such as #/components/schemas/OrderOut resolves to api_contract.schemas.OrderOut in this digest.'
+demo_seed_examples:
+  classification: examples_only_not_runtime_truth
+  guidance: Seed data is useful for examples and entity vocabulary, but the runtime agent must query APIs to establish current
+    state.
+  customers:
+  - id: CUS-DEMO-001
+    name: Alice Johnson
+  - id: CUS-DEMO-002
+    name: Daniel Smith
+  products:
+  - sku: LAPTOP-PRO-14
+    name: ProBook 14 Laptop
+    unit_price: '1299.00'
+    initial_stock_on_hand: 8
+    returnable: true
+  - sku: MONITOR-27-4K
+    name: 27-inch 4K Monitor
+    unit_price: '449.00'
+    initial_stock_on_hand: 3
+    returnable: true
+  - sku: USB-C-DOCK
+    name: USB-C Docking Station
+    unit_price: '189.00'
+    initial_stock_on_hand: 12
+    returnable: true
+  - sku: KB-MECH-01
+    name: Mechanical Keyboard
+    unit_price: '129.00'
+    initial_stock_on_hand: 20
+    returnable: true
+  - sku: HEADSET-PRO
+    name: Professional Headset
+    unit_price: '219.00'
+    initial_stock_on_hand: 10
+    returnable: true
+  - sku: LICENSE-IDE-1Y
+    name: IDE Professional License - 1 Year
+    unit_price: '299.00'
+    initial_stock_on_hand: 9999
+    returnable: false
+dependencies:
+- name: PostgreSQL
+  type: database
+  required: true
+  purpose: persistent service state in the lab deployment
+evidence:
+  source_authority_policy:
+  - priority: 1
+    source: implemented Python behavior in app/services.py and routers
+    use: actual runtime business behavior and errors
+  - priority: 2
+    source: tests/test_workflow.py
+    use: verified expected workflows/business outcomes
+  - priority: 3
+    source: openapi.yaml and app/schemas.py
+    use: HTTP request/response contract and validation
+  - priority: 4
+    source: docs/BUSINESS_RULES.md, ARCHITECTURE.md, README.md, service-metadata.yaml
+    use: intended semantics, scope, and explanation
+  - priority: 5
+    source: Kubernetes/Docker metadata
+    use: deployment/runtime binding only
+  key_claims:
+    order_lifecycle:
+    - app/domain.py
+    - app/services.py
+    - docs/BUSINESS_RULES.md
+    return_window_30_days:
+    - app/services.py:RETURN_WINDOW_DAYS
+    - docs/BUSINESS_RULES.md
+    partial_allocation:
+    - app/services.py:allocate_inventory
+    - tests/test_workflow.py:test_partial_inventory_allocation
+    cancellation_after_shipping_blocked:
+    - app/services.py:cancel_order
+    - tests/test_workflow.py:test_business_rule_prevents_cancelling_shipped_order
+    non_returnable_product:
+    - app/services.py:create_return
+    - tests/test_workflow.py:test_non_returnable_product_is_rejected
+    return_refund_workflow:
+    - app/services.py:create_return/approve_return/receive_return/refund_return
+    - tests/test_workflow.py
+    api_operations:
+    - openapi.yaml
+    - app/routers/*
+    - docs/ENDPOINT_CATALOG.md
+  source_manifest:
+  - path: service-metadata.yaml
+    sha256: fdc10e0233f22a560438c10612671b963493cb6b4792252f47879f0868f16c56
+  - path: openapi.yaml
+    sha256: e556cf1483c173539abda6a8a5c242bd0611b96f5c0d61b810bc5bf695a02cf5
+  - path: app/main.py
+    sha256: 1e042722261b782804197532f218ef3ab980438c20887ed79126c784be1e0595
+  - path: app/domain.py
+    sha256: b3e58241008bdad18b74fe244ddbfbce01ae0d33985405d9be6048bfd59722c3
+  - path: app/models.py
+    sha256: 9bdd62f1123fb8caca32b1902b10fc62867ccfe542d480744ccaf8bc82d0047c
+  - path: app/schemas.py
+    sha256: 80097b24ca2f67c12130524606e8700cc3f6468958d8690ea65e45e6da8a7caa
+  - path: app/services.py
+    sha256: 6b9a9e66c1a239f46f149d0b8e08a177b0e4937601b1301f151a82abebef023a
+  - path: app/errors.py
+    sha256: 96da3c0c40e3a29b550b2907ebd53af7cd38eace37d653886b86bac1737ee7f8
+  - path: app/seed.py
+    sha256: 4c07e3067e42dfb2f91d2ff2c33df095759adfeb1e9c134be49e0e77fd1e64d5
+  - path: app/routers/catalog.py
+    sha256: c590bd1cbfe1690b07b1ce9c2a84d2e21db97fd297abc3fde6d86cea574d82b5
+  - path: app/routers/orders.py
+    sha256: 7710ade12066a773f46e451c4795f92c4f0b5ef74b8f1d9b5fde1d9eb5e634ef
+  - path: app/routers/shipments.py
+    sha256: 100ebf83a464475f19fca2d2f8628522b71093721e093414527f7fd88823eb6a
+  - path: app/routers/returns.py
+    sha256: 3cb7cff720b7d450e74495ae03e166a5491896e54ea830960f4fece6bd45050c
+  - path: app/routers/health.py
+    sha256: 2f650ad5e0a43611f95089a27e085db2fdd95b06cd89c8c310e83f37d702f45a
+  - path: docs/ARCHITECTURE.md
+    sha256: e0109415dcc4ffcc758d7ebaa86adf8cdf3b7dd913b0f3f259dc7e5ced733cdf
+  - path: docs/BUSINESS_RULES.md
+    sha256: e0db57c37df75649a6f74195354c9d3f84df0751f587968f01927b2032e13da5
+  - path: docs/ENDPOINT_CATALOG.md
+    sha256: 4cde8a05028c48ec8f7feb5497f71831ccc7d748eed4f4f8c2a6192cacdf0a63
+  - path: docs/API_EXAMPLES.md
+    sha256: d1ff480345c714d73683ba92a66b47cf800e4040f9c055968b9aab567dc95080
+  - path: docs/DEPLOYMENT.md
+    sha256: efc3530013cc5aab3acaaa0eac3b4e7a061d66d5ab518224ab588b77e1868da7
+  - path: tests/test_workflow.py
+    sha256: f91a14d602391fea36be80c089fd0e8a32be2941515cd330c45ead7cfbf9fdc4
+  - path: k8s/00-namespace.yaml
+    sha256: 30e11ae45f8cdbfeb308967124f29087f98600f7776abdb718a36f25a071d5c2
+  - path: k8s/02-configmap.yaml
+    sha256: 4c20e8e8399b230d3afc7aa5cd252700872e03e5a4f11081b807460f01357a4b
+  - path: k8s/03-postgres.yaml
+    sha256: 1103d36d20461c652122f79c18da443392ad7e402a894b32a0682c0d56f3d499
+  - path: k8s/04-app.yaml
+    sha256: c3d59be21f3ef43e18b04afc0df464bfdd71738a7be66b13b967b2518190a905
+  - path: Dockerfile
+    sha256: 7751ce55c0162eee2eedb0b36b97fc82918ae11283e98c6f400ba0f989732a0b
+  - path: requirements.txt
+    sha256: a91b1cc642a839f9124b9f7e109b3b3ccd4dbc8e606c1a23339f57c1c111b77e
+discrepancies_and_implementation_notes:
+- id: DISC-001
+  severity: low
+  subject: cancel delivered error specificity
+  finding: cancel_order checks any shipped_qty > 0 before checking Order.status == DELIVERED. In a consistent delivered order,
+    shipped_qty is necessarily > 0, so ORDER_ALREADY_SHIPPED is expected before ORDER_ALREADY_DELIVERED.
+  runtime_guidance: Treat both as cancellation-ineligible and recommend returns after delivery; do not rely on ORDER_ALREADY_DELIVERED
+    being emitted.
+- id: DISC-002
+  severity: medium
+  subject: duplicate return lines
+  finding: Shipment creation explicitly rejects duplicate order_item_id lines, but create_return has no equivalent duplicate-line
+    guard. Duplicate lines in one return request could bypass the intended per-item available quantity calculation because
+    each line is validated before the new ReturnItems exist.
+  runtime_guidance: Normalize return request items by order_item_id and merge quantities before invoking create_return.
+- id: DISC-003
+  severity: informational
+  subject: partial shipment then new allocation
+  finding: allocate_inventory accepts only PAID or PARTIALLY_ALLOCATED. create_shipment changes a partially fulfilled order
+    to PARTIALLY_SHIPPED. Therefore v1 cannot allocate newly available inventory after an order has entered PARTIALLY_SHIPPED.
+  runtime_guidance: Do not plan allocate_inventory from PARTIALLY_SHIPPED; explain this v1 service limitation.
+- id: DISC-004
+  severity: informational
+  subject: inventory adjustment reason not audited
+  finding: InventoryAdjustment requires a reason, but adjust_inventory does not persist or emit that reason.
+  runtime_guidance: Do not claim that inventory adjustment reasons are auditable in v1.
+analysis_quality:
+  overall_confidence: high
+  basis:
+  - all Python source modules
+  - all FastAPI routers
+  - checked-in OpenAPI 3.1 contract
+  - service metadata
+  - business/architecture/API/deployment docs
+  - workflow tests
+  - Kubernetes manifests
+  - seed data
+  known_gaps:
+  - No authentication/authorization semantics exist in v1.
+  - No external payment or carrier behavior exists; those are simulated.
+  - OpenAPI does not enumerate stable BusinessError response codes per operation, so error mapping is derived from implementation.
+  runtime_agent_requirements:
+  - Load only this digest plus environment-specific base URL/credentials if any are added later.
+  - Use operations as an allowlist.
+  - Use api_contract.schemas for request validation and operations.*.contract for HTTP construction.
+  - Use business rules/state machines/workflows for planning and explanation.
+  - Use evidence/discrepancies when explaining confidence or implementation limitations.
