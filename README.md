@@ -4,9 +4,23 @@ A Kubernetes-deployable LangGraph conversational layer that enables natural-lang
 
 The included Order/Fulfillment service serves as the reference implementation and demonstration domain.
 
-## Showcase goal
+## Why this project exists
 
-> Can a separate runtime agent use a machine-generated semantic service digest to provide a stateful conversational interface to a REST microservice while keeping API execution deterministic, validated, and human-approved for risky actions?
+Jack leads an engineering organization responsible for building and operating a growing portfolio of REST microservices. Each service exposes its own APIs, domain model, business rules, validation constraints, workflows, and operational assumptions. Some services are well documented; others rely on a combination of OpenAPI definitions, source code, tests, internal documentation, and knowledge held by the engineers who built them.
+
+The services themselves are already accessible through APIs. But understanding how to use those APIs correctly is a different problem. Engineers and other technical users still need to determine which endpoint to call, what information is required, how different operations relate to one another, what business rules apply, and whether a requested action is safe in the service's current state.
+
+Jack starts asking a different question:
+
+> What if a microservice could expose not only a machine-readable API, but also enough semantic knowledge for an AI agent to understand what the service does, reason about its capabilities and constraints, and safely operate it through natural language?
+
+A user might simply ask, "Show me the orders currently in the system," rather than locating the correct endpoint and constructing the request manually. They might ask, "Can this order still be cancelled?" and expect the system to reason over the service's business rules before taking any action. For operations that modify state, the agent could validate the request, resolve the correct service operation, and require explicit confirmation whenever the action carries meaningful risk.
+
+But giving an LLM unrestricted access to a REST service would introduce a different class of problems. The model should not invent URLs, bypass validation, or decide on its own how an HTTP request should be constructed. The reasoning layer therefore needs to be separated from the execution layer.
+
+This project explores that architecture. Service knowledge is captured in a structured **Service Digest** describing the service's purpose, domain model, operations, schemas, workflows, business rules, safety requirements, and conversational semantics. A LangGraph-based agent reasons over that digest to understand user intent and select an appropriate operation, while deterministic application code validates parameters, enforces safety policies, constructs the HTTP request, and executes only allowlisted service operations.
+
+The included Order/Fulfillment service serves as the reference implementation, but the broader goal is to explore a reusable conversational layer that can sit in front of arbitrary REST microservices while keeping API execution constrained, explainable, and under deterministic safety controls.
 
 ## Architecture
 
