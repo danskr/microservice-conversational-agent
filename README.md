@@ -34,8 +34,8 @@ At the top, **LangSmith Studio** provides the interactive chat and graph interfa
 
 The agent reasons over two primary sources of context:
 
-- **`service-digest.yaml`** — the semantic representation of the target microservice, including its purpose, REST operations, schemas, business rules, workflows, conversational hints, and execution policies.
-- **`Thread state`** — the current conversation history and runtime context, including previously resolved entities, prior operation results, pending confirmations, and other state required for multi-turn interaction.
+- **`service-digest.yaml`**: the semantic representation of the target microservice, including its purpose, REST operations, schemas, business rules, workflows, conversational hints, and execution policies.
+- **`Thread state`**: the current conversation history and runtime context, including previously resolved entities, prior operation results, pending confirmations, and other state required for multi-turn interaction.
 
 These inputs are combined by the **LLM planner**, which interprets the user's intent and produces a structured **canonical operation** rather than an arbitrary HTTP request. The canonical operation identifies the service operation to invoke together with the required path parameters, query parameters, request body, and other structured arguments.
 
