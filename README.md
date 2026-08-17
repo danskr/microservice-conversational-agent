@@ -23,7 +23,7 @@ This project explores that architecture. Service knowledge is captured in a stru
 The included Order/Fulfillment service serves as the reference implementation, but the broader goal is to explore a reusable conversational layer that can sit in front of arbitrary REST microservices while keeping API execution constrained, explainable, and under deterministic safety controls.
 
 <p align="center">
-  <img src="images/main.png" alt="SRE engineer monitoring Kubernetes applications and operational signals" width="40%">
+  <img src="images/main.png" alt="SRE engineer monitoring Kubernetes applications and operational signals" width="60%">
 </p>
 
 ## Architecture
@@ -107,7 +107,7 @@ The graph deliberately separates:
 
 This separation establishes the central safety boundary of the project: **the LLM can decide what the user is trying to accomplish, but it cannot directly construct or execute arbitrary HTTP requests**. Only operations defined in the Service Digest and accepted by the deterministic validation and safety layers can reach the microservice.
 
-<img src="images/graph.png" alt="LangGraph workflow for Conversational Agent" width="100%">
+<img src="images/graph.png" alt="LangGraph workflow for Conversational Agent" width="60%">
 
 ## Critical execution boundary
 
