@@ -65,18 +65,18 @@ The digest is represented as a single YAML document and is intended to contain s
 
 At a high level, the Service Digest contains:
 
-- **Service identity and purpose** — service name, responsibility, business capabilities, scope, non-goals, ownership, and high-level behavior.
-- **Domain model** — important entities, relationships, identifiers, enums, terminology, and concepts used by the service.
-- **REST operations** — the allowlisted operations the agent may invoke, including operation IDs, HTTP methods, paths, parameters, request/response schemas, expected behavior, and execution characteristics.
-- **Business rules** — constraints that cannot be inferred reliably from API schemas alone, such as when an order may be cancelled, which state transitions are permitted, or what conditions must hold before an operation can proceed.
-- **State machines** — valid lifecycle states and transitions for domain entities such as orders, payments, shipments, or fulfillment processes.
-- **Workflows** — higher-level sequences that describe how multiple service operations relate to common business processes.
-- **Schemas and validation metadata** — structured definitions used by the deterministic validator to verify path parameters, query parameters, and request bodies before execution.
-- **Errors and events** — known business errors, validation failures, domain events, and other outcomes that help the agent interpret service responses.
-- **Conversational semantics** — guidance for resolving phrases such as "this order", "the latest shipment", or "the previous one" into concrete service entities and identifiers.
-- **Execution and safety policy** — metadata describing whether an operation is read-only or state-changing, its risk level, whether confirmation is required, and other restrictions enforced before execution.
-- **Evidence and provenance** — references indicating where particular pieces of knowledge were derived from, such as source code, OpenAPI definitions, tests, or documentation.
-- **Discrepancies and uncertainties** — places where source materials disagree or where the available evidence is insufficient to make a strong assertion.
+- **Service identity and purpose**: service name, responsibility, business capabilities, scope, non-goals, ownership, and high-level behavior.
+- **Domain model**: important entities, relationships, identifiers, enums, terminology, and concepts used by the service.
+- **REST operations**: the allowlisted operations the agent may invoke, including operation IDs, HTTP methods, paths, parameters, request/response schemas, expected behavior, and execution characteristics.
+- **Business rules**: constraints that cannot be inferred reliably from API schemas alone, such as when an order may be cancelled, which state transitions are permitted, or what conditions must hold before an operation can proceed.
+- **State machines**: valid lifecycle states and transitions for domain entities such as orders, payments, shipments, or fulfillment processes.
+- **Workflows**: higher-level sequences that describe how multiple service operations relate to common business processes.
+- **Schemas and validation metadata**: structured definitions used by the deterministic validator to verify path parameters, query parameters, and request bodies before execution.
+- **Errors and events**: known business errors, validation failures, domain events, and other outcomes that help the agent interpret service responses.
+- **Conversational semantics**: guidance for resolving phrases such as "this order", "the latest shipment", or "the previous one" into concrete service entities and identifiers.
+- **Execution and safety policy**: metadata describing whether an operation is read-only or state-changing, its risk level, whether confirmation is required, and other restrictions enforced before execution.
+- **Evidence and provenance**: references indicating where particular pieces of knowledge were derived from, such as source code, OpenAPI definitions, tests, or documentation.
+- **Discrepancies and uncertainties**: places where source materials disagree or where the available evidence is insufficient to make a strong assertion.
 
 A simplified conceptual structure looks like this:
 
